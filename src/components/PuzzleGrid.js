@@ -1,22 +1,28 @@
 /**
- * PuzzleGrid v5 — Stable-ID animation system
+ * PuzzleGrid v6 — Pre-computed cascade + timing-based gravity
  *
- * Design principles:
- *  1. Each block has a UUID. React key = block ID (never changes during play).
- *  2. Animated.Values are keyed by block ID → no unmount/remount mid-animation.
- *  3. React setState only for adding/removing blocks (match/gravity).
- *  4. All position changes go through Animated — React never causes re-renders during animation.
+ * Root-cause fix for cascade freeze (v5 issue):
+ *  - v5: processMatches recursed N times → N React re-renders, N double-rAF waits,
+ *        N spring gravity waits (underdamped, 400-600ms each) = 2-3s freeze on 3-combo
  *
- * Animation feel:
- *  - Drag: block follows finger; neighbor block pushes in opposite direction
- *  - Invalid swap: snaps to target, bounces back
- *  - Match pop: punch up (1.4×) → shrink+fade (0.18s total)
- *  - Gravity: parallel spring drop, tension=130 (natural, minimal vibration)
- *  - Idle breathe: gentle scale pulse on each block (ZooKeeper feel)
- *  - Selected: block lifts (scale 1.08, shadow-like)
+ * v6 solution:
+ *  1. PRECOMPUTE: Entire cascade chain computed synchronously in a while-loop
+ *     before any animation starts. Grid/bmap reach final state in microseconds.
+ *  2. ONE setState: All matched IDs removed + ALL new block IDs added in a
+ *     single setLiveIds call → one React re-render total per swap.
+ *  3. ONE rAF wait: Single double-frame wait for React to mount all new blocks.
+ *  4. TIMING gravity: Easing.out(Easing.quad) at 190ms replaces spring.
+ *     Deterministic, fast, no oscillation. 3-combo = ~1s (was 2-3s frozen).
+ *  5. REF callbacks: onScoreAdd/onCombo accessed via refs → no stale closures,
+ *     processMatches has empty deps → stable reference, no recreations.
+ *
+ * Per-cascade timing budget:
+ *   55ms punch + 90ms fade + 190ms drop = 335ms/level
+ *   3-combo ≈ 1.0s  |  5-combo ≈ 1.7s  (fully animated, responsive)
  */
+
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { View, StyleSheet, PanResponder, Animated } from 'react-native';
+import { View, StyleSheet, PanResponder, Animated, Easing } from 'react-native';
 import BlockTile from './BlockTile';
 import {
   GRID_COLS, GRID_ROWS, TILE_SIZE, TILE_GAP,
@@ -27,18 +33,28 @@ import {
   CASCADE_MULT,
 } from '../constants/gameConfig';
 
+// ─── Layout ──────────────────────────────────────────────────────
 const CELL   = TILE_SIZE + TILE_GAP;
 const GRID_W = GRID_COLS * CELL - TILE_GAP;
 const GRID_H = GRID_ROWS * CELL - TILE_GAP;
+
+// ─── Animation timing (ms) ───────────────────────────────────────
+const POP_PUNCH_MS    = 55;   // Block punches out to 1.45×
+const POP_FADE_MS     = 90;   // Block collapses + fades to 0
+const DROP_MS         = 190;  // Gravity fall (timing, not spring)
+const SWAP_SNAP_MS    = 120;  // Valid swap snap into place
+const SNAP_BACK_MS    = 160;  // Invalid swap / drag cancel snap-back
+const INVALID_FWD_MS  = 100;  // Invalid swap snap forward
+const INVALID_BACK_MS = 180;  // Invalid swap bounce back
 
 // ─── Unique block IDs ────────────────────────────────────────────
 let _uid = 1000;
 const uid = () => ++_uid;
 
-// ─── Pure data helpers (no React) ────────────────────────────────
+// ─── Pure helpers ────────────────────────────────────────────────
 const rndType    = ()     => Math.floor(Math.random() * BLOCKS.length);
 const rndSpecial = (hard) => {
-  const v = Math.random();
+  const v  = Math.random();
   const py = hard ? PYRAMID_RATE_HARD : PYRAMID_RATE_EASY;
   const ro = hard ? ROBOT_RATE_HARD   : ROBOT_RATE_EASY;
   if (v < py)      return 'pyramid';
@@ -60,8 +76,8 @@ function findMatches(grid, bmap) {
   for (let r = 0; r < GRID_ROWS; r++) {
     let s = 0;
     for (let c = 1; c <= GRID_COLS; c++) {
-      const ok = c < GRID_COLS && grid[r][c] && grid[r][c-1] &&
-                 matchIds(grid[r][c], grid[r][c-1], bmap);
+      const ok = c < GRID_COLS && grid[r][c] && grid[r][c - 1] &&
+                 matchIds(grid[r][c], grid[r][c - 1], bmap);
       if (!ok) {
         if (c - s >= 3) for (let k = s; k < c; k++) hits.add(`${r},${k}`);
         s = c;
@@ -72,8 +88,8 @@ function findMatches(grid, bmap) {
   for (let c = 0; c < GRID_COLS; c++) {
     let s = 0;
     for (let r = 1; r <= GRID_ROWS; r++) {
-      const ok = r < GRID_ROWS && grid[r][c] && grid[r-1][c] &&
-                 matchIds(grid[r][c], grid[r-1][c], bmap);
+      const ok = r < GRID_ROWS && grid[r][c] && grid[r - 1][c] &&
+                 matchIds(grid[r][c], grid[r - 1][c], bmap);
       if (!ok) {
         if (r - s >= 3) for (let k = s; k < r; k++) hits.add(`${k},${c}`);
         s = r;
@@ -90,7 +106,9 @@ function buildCleanGrid(hard) {
     grid = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
     for (let r = 0; r < GRID_ROWS; r++)
       for (let c = 0; c < GRID_COLS; c++) {
-        const b = mkBlock(hard); bmap.set(b.id, b); grid[r][c] = b.id;
+        const b = mkBlock(hard);
+        bmap.set(b.id, b);
+        grid[r][c] = b.id;
       }
     tries++;
   } while (findMatches(grid, bmap).size > 0 && tries < 100);
@@ -98,19 +116,20 @@ function buildCleanGrid(hard) {
 }
 
 function scoreFor(n, cascade) {
-  const base = n <= 3 ? SCORE_MATCH3 : n <= 4 ? SCORE_MATCH4
-             : n <= 5 ? SCORE_MATCH5 : SCORE_MATCH5 + (n-5)*SCORE_EXTRA;
+  const base = n <= 3 ? SCORE_MATCH3
+             : n === 4 ? SCORE_MATCH4
+             : n === 5 ? SCORE_MATCH5
+             : SCORE_MATCH5 + (n - 5) * SCORE_EXTRA;
   return Math.floor(base * Math.pow(CASCADE_MULT, cascade));
 }
 
-// ─── Per-block idle breathe animation ────────────────────────────
-// Stagger phase by block ID so all blocks don't pulse together
+// ─── Idle breathe hook ───────────────────────────────────────────
 function useIdleBreathe(anim, blockId, paused) {
   const loopRef = useRef(null);
   useEffect(() => {
     if (paused) { loopRef.current?.stop(); return; }
     const phase = (blockId * 137) % 3000; // golden-ratio stagger
-    const timeout = setTimeout(() => {
+    const t = setTimeout(() => {
       loopRef.current = Animated.loop(
         Animated.sequence([
           Animated.timing(anim, { toValue: 1.03, duration: 900, useNativeDriver: true }),
@@ -119,54 +138,59 @@ function useIdleBreathe(anim, blockId, paused) {
       );
       loopRef.current.start();
     }, phase);
-    return () => {
-      clearTimeout(timeout);
-      loopRef.current?.stop();
-      anim.setValue(1);
-    };
+    return () => { clearTimeout(t); loopRef.current?.stop(); anim.setValue(1); };
   }, [paused]);
 }
 
-// ─── Animated block component (stable key = id) ──────────────────
-const BlockAnim = React.memo(({ id, blockData, ax, ay, ascale, aopacity, isDragging, paused }) => {
-  const def      = BLOCKS[blockData.type] ?? BLOCKS[0];
-  const breathe  = useRef(new Animated.Value(1)).current;
-  useIdleBreathe(breathe, id, paused || isDragging);
+// ─── Block component (stable key = UUID) ─────────────────────────
+const BlockAnim = React.memo(
+  ({ id, blockData, ax, ay, ascale, aopacity, isDragging, paused }) => {
+    const def     = BLOCKS[blockData.type] ?? BLOCKS[0];
+    const breathe = useRef(new Animated.Value(1)).current;
+    useIdleBreathe(breathe, id, paused || isDragging);
 
-  return (
-    <Animated.View style={{
-      position:  'absolute',
-      width:     TILE_SIZE,
-      height:    TILE_SIZE,
-      zIndex:    isDragging ? 20 : 1,
-      transform: [
-        { translateX: ax },
-        { translateY: ay },
-        { scale: Animated.multiply(ascale, breathe) },
-      ],
-      opacity: aopacity,
-    }}>
-      <BlockTile block={blockData} blockDef={def} selected={isDragging} />
-    </Animated.View>
-  );
-}, (prev, next) =>
-  prev.isDragging === next.isDragging &&
-  prev.paused     === next.paused     &&
-  prev.blockData  === next.blockData
+    return (
+      <Animated.View style={{
+        position: 'absolute',
+        width:    TILE_SIZE,
+        height:   TILE_SIZE,
+        zIndex:   isDragging ? 20 : 1,
+        transform: [
+          { translateX: ax },
+          { translateY: ay },
+          { scale: Animated.multiply(ascale, breathe) },
+        ],
+        opacity: aopacity,
+      }}>
+        <BlockTile block={blockData} blockDef={def} selected={isDragging} />
+      </Animated.View>
+    );
+  },
+  (prev, next) =>
+    prev.isDragging === next.isDragging &&
+    prev.paused     === next.paused     &&
+    prev.blockData  === next.blockData,
 );
 
-// ─── Main grid component ─────────────────────────────────────────
+// ─── Main component ───────────────────────────────────────────────
 export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
   const hardRef = useRef(hard);
   hardRef.current = hard;
 
-  // Mutable game state (refs, not useState — prevents re-renders mid-animation)
-  const gridRef  = useRef(null);  // grid[r][c] = block ID | null
-  const bmapRef  = useRef(null);  // Map<id, {type, special}>
-  const animsRef = useRef(new Map()); // Map<id, {x,y,scale,opacity}>
-  const locked   = useRef(false);
+  // Keep latest callbacks in refs → processMatches has [] deps (stable ref)
+  const onScoreAddRef = useRef(onScoreAdd);
+  const onComboRef    = useRef(onCombo);
+  onScoreAddRef.current = onScoreAdd;
+  onComboRef.current    = onCombo;
 
-  // React state: only liveIds drives render additions/removals
+  // Mutable game state (refs prevent re-renders mid-animation)
+  const gridRef  = useRef(null);   // grid[r][c] = blockId | null
+  const bmapRef  = useRef(null);   // Map<id, {type, special}>
+  const animsRef = useRef(new Map()); // Map<id, {x, y, scale, opacity}>
+  const locked   = useRef(false);
+  const drag     = useRef(null);   // {r, c, id, dir, nid, nr, nc}
+
+  // Single piece of React state — only drives mount/unmount of block nodes
   const [liveIds, setLiveIds] = useState(() => {
     const { grid, bmap } = buildCleanGrid(hard);
     gridRef.current = grid;
@@ -174,10 +198,7 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
     return new Set(bmap.keys());
   });
 
-  // Drag state
-  const drag = useRef(null); // {r,c,id,dir,nid}
-
-  // ─── Anim accessors ──────────────────────────────────────────
+  // ─── Animated.Value accessor ─────────────────────────────────
   function getAnim(id, initX, initY) {
     if (!animsRef.current.has(id)) {
       animsRef.current.set(id, {
@@ -190,6 +211,7 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
     return animsRef.current.get(id);
   }
 
+  // Initialise anims for all existing blocks (called on every render — cheap)
   function initAnims() {
     const grid = gridRef.current;
     for (let r = 0; r < GRID_ROWS; r++)
@@ -197,55 +219,55 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
         if (grid[r][c]) getAnim(grid[r][c], c * CELL, r * CELL);
   }
 
-  // ─── Spring move ─────────────────────────────────────────────
-  const springTo = (id, r, c, friction = 7, tension = 180) =>
+  // ─── Animation helpers ───────────────────────────────────────
+
+  // Snappy spring — for direct user-interaction swaps (feels responsive)
+  const snapSpring = (id, r, c, friction = 10, tension = 240) =>
     Animated.parallel([
-      Animated.spring(getAnim(id).x, { toValue: c*CELL, friction, tension, useNativeDriver: true }),
-      Animated.spring(getAnim(id).y, { toValue: r*CELL, friction, tension, useNativeDriver: true }),
+      Animated.spring(getAnim(id).x, { toValue: c * CELL, friction, tension, useNativeDriver: true }),
+      Animated.spring(getAnim(id).y, { toValue: r * CELL, friction, tension, useNativeDriver: true }),
     ]);
 
-  // ─── Pop animation: punch → collapse ─────────────────────────
-  function doPop(ids) {
-    return new Promise(res =>
-      Animated.parallel(ids.map(id => {
-        const a = getAnim(id);
-        return Animated.sequence([
-          // Punch outward
-          Animated.timing(a.scale, { toValue: 1.45, duration: 65, useNativeDriver: true }),
-          // Collapse + fade simultaneously
-          Animated.parallel([
-            Animated.timing(a.scale,   { toValue: 0, duration: 100, useNativeDriver: true }),
-            Animated.timing(a.opacity, { toValue: 0, duration: 100, useNativeDriver: true }),
-          ]),
-        ]);
-      })).start(res)
-    );
-  }
+  // Easing timing — for gravity drops (deterministic, no oscillation)
+  const dropTiming = (id, r, c) =>
+    Animated.parallel([
+      Animated.timing(getAnim(id).x, {
+        toValue:  c * CELL,
+        duration: DROP_MS,
+        easing:   Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(getAnim(id).y, {
+        toValue:  r * CELL,
+        duration: DROP_MS,
+        easing:   Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]);
 
-  // ─── Gravity + refill ─────────────────────────────────────────
+  // ─── Gravity: pure data mutation (no animation) ───────────────
   function applyGravity(matchedIds) {
     const grid = gridRef.current;
     const bmap = bmapRef.current;
-    const drops = [];   // {id, toR, toC, fromAbove: bool}
+    const drops  = [];
     const newIds = [];
 
     for (let c = 0; c < GRID_COLS; c++) {
-      // Collect surviving blocks top→bottom
+      // Keep surviving blocks (top→bottom order)
       const surviving = [];
       for (let r = 0; r < GRID_ROWS; r++)
-        if (grid[r][c] && !matchedIds.has(grid[r][c])) surviving.push(grid[r][c]);
+        if (grid[r][c] && !matchedIds.has(grid[r][c]))
+          surviving.push(grid[r][c]);
 
       const needed = GRID_ROWS - surviving.length;
-
-      // New blocks
-      const fresh = Array.from({ length: needed }, () => {
+      const fresh  = Array.from({ length: needed }, () => {
         const b = mkBlock(hardRef.current);
         bmap.set(b.id, b);
         newIds.push(b.id);
         return b.id;
       });
 
-      // Full column: fresh on top, surviving below
+      // fresh blocks on top, survivors fall below
       const full = [...fresh, ...surviving];
       for (let r = 0; r < GRID_ROWS; r++) {
         grid[r][c] = full[r];
@@ -255,95 +277,145 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
     return { drops, newIds };
   }
 
-  // ─── Match processing chain ───────────────────────────────────
-  const processMatches = useCallback(async (matches, cascade) => {
-    if (matches.size === 0) { locked.current = false; return; }
-
+  // ─── Core cascade processor (v6: pre-compute → single React update → animate)
+  const processMatches = useCallback(async (initialMatches) => {
     const grid = gridRef.current;
     const bmap = bmapRef.current;
 
-    // Score
-    let pts = scoreFor(matches.size, cascade), bonus = 0;
-    const matchedIds = new Set();
-    matches.forEach(key => {
-      const [r, c] = key.split(',').map(Number);
-      const id = grid[r][c];
-      matchedIds.add(id);
-      if (bmap.get(id)?.special === 'pyramid') bonus += SCORE_PYRAMID;
-    });
-    onScoreAdd(pts + bonus);
-    if (cascade > 0) onCombo(cascade);
+    // ── Phase 1: Pre-compute entire cascade chain synchronously ──────────
+    // This runs in microseconds. gridRef/bmapRef reach their final state here.
+    const steps = [];
+    let curMatches = initialMatches;
+    let cascade    = 0;
 
-    // Pop!
-    await doPop([...matchedIds]);
+    while (curMatches.size > 0 && cascade < 10) {
+      const matchedIds = new Set();
+      let pts = 0;
 
-    // Gravity
-    const { drops, newIds } = applyGravity(matchedIds);
+      curMatches.forEach(key => {
+        const [r, c] = key.split(',').map(Number);
+        const id = grid[r][c];
+        matchedIds.add(id);
+        if (bmap.get(id)?.special === 'pyramid') pts += SCORE_PYRAMID;
+      });
+      pts += scoreFor(curMatches.size, cascade);
 
-    // Add new blocks to React state (so they mount)
+      // Mutates grid + bmap → next findMatches sees the updated state
+      const { drops, newIds } = applyGravity(matchedIds);
+
+      steps.push({ matchedIds, drops, newIds, pts, cascade });
+      curMatches = findMatches(grid, bmap);
+      cascade++;
+    }
+
+    if (steps.length === 0) { locked.current = false; return; }
+
+    // ── Phase 2: Single React update — remove matched, add ALL new ───────
+    // Only ONE setLiveIds call for the entire cascade chain.
+    const allMatchedIds = new Set(steps.flatMap(s => [...s.matchedIds]));
+    const allNewIds     = steps.flatMap(s => s.newIds);
+
     setLiveIds(prev => {
       const next = new Set(prev);
-      matchedIds.forEach(id => next.delete(id));
-      newIds.forEach(id => next.add(id));
+      allMatchedIds.forEach(id => next.delete(id));
+      allNewIds.forEach(id => next.add(id));
       return next;
     });
 
-    // One frame for new blocks to mount
+    // Single double-rAF: wait for React to mount all new block nodes
     await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
 
-    // Set new blocks' start position (above grid)
-    drops.forEach(({ id, toC, isNew, toR }) => {
-      if (isNew) {
-        const a = getAnim(id, toC * CELL, -CELL * 2);
-        a.x.setValue(toC * CELL);
-        a.y.setValue(-CELL * 2);
-        a.scale.setValue(1);
-        a.opacity.setValue(1);
-      }
+    // Position ALL new blocks from ALL cascade levels above the grid.
+    // overflow:hidden clips them until their animation starts.
+    steps.forEach(({ drops }) => {
+      drops.forEach(({ id, toC, isNew }) => {
+        if (isNew) {
+          const a = getAnim(id, toC * CELL, -CELL * 2);
+          a.x.setValue(toC * CELL);
+          a.y.setValue(-CELL * 2);
+          a.scale.setValue(1);
+          a.opacity.setValue(1);
+        }
+      });
     });
 
-    // Animate all drops simultaneously
-    await new Promise(res =>
-      Animated.parallel(drops.map(({ id, toR, toC }) =>
-        springTo(id, toR, toC, 7, 130)  // low tension = natural gravity, minimal vibration
-      )).start(res)
-    );
+    // ── Phase 3: Animate each cascade level sequentially ─────────────────
+    for (const { matchedIds, drops, pts, cascade } of steps) {
+      // Report score + combo immediately (UI updates don't wait for animation)
+      onScoreAddRef.current(pts);
+      if (cascade > 0) onComboRef.current(cascade);
 
-    // Clean up matched anims
-    matchedIds.forEach(id => animsRef.current.delete(id));
+      // Pop: punch up (55ms) → collapse + fade (90ms)
+      await new Promise(res =>
+        Animated.parallel([...matchedIds].map(id => {
+          const a = getAnim(id);
+          return Animated.sequence([
+            Animated.timing(a.scale, {
+              toValue: 1.45, duration: POP_PUNCH_MS, useNativeDriver: true,
+            }),
+            Animated.parallel([
+              Animated.timing(a.scale,   { toValue: 0, duration: POP_FADE_MS, useNativeDriver: true }),
+              Animated.timing(a.opacity, { toValue: 0, duration: POP_FADE_MS, useNativeDriver: true }),
+            ]),
+          ]);
+        })).start(res)
+      );
 
-    // Cascade
-    const next = findMatches(grid, bmap);
-    if (next.size > 0) processMatches(next, cascade + 1);
-    else locked.current = false;
-  }, [onScoreAdd, onCombo]);
+      // Gravity: all blocks in this level drop simultaneously (190ms easing)
+      // New blocks from later cascade levels are above the grid (invisible) — safe to ignore
+      await new Promise(res =>
+        Animated.parallel(drops.map(({ id, toR, toC }) => dropTiming(id, toR, toC)))
+          .start(res)
+      );
+    }
 
-  // ─── Swap logic ───────────────────────────────────────────────
+    // ── Phase 4: Cleanup ──────────────────────────────────────────────────
+    allMatchedIds.forEach(id => animsRef.current.delete(id));
+    locked.current = false;
+  }, []); // Empty deps — all mutable state accessed via refs
+
+  // ─── Swap handler ────────────────────────────────────────────
   const doSwap = useCallback(async (r1, c1, r2, c2) => {
     const grid = gridRef.current;
     const bmap = bmapRef.current;
-    const id1 = grid[r1][c1], id2 = grid[r2][c2];
+    const id1  = grid[r1][c1];
+    const id2  = grid[r2][c2];
 
-    // Swap data
+    // Swap data first
     grid[r1][c1] = id2;
     grid[r2][c2] = id1;
     const matches = findMatches(grid, bmap);
 
     if (matches.size > 0) {
-      // Valid — snap into place, then pop
+      // Valid: snap blocks to swapped positions (spring for tactile feel)
       await new Promise(res =>
-        Animated.parallel([springTo(id1,r2,c2), springTo(id2,r1,c1)]).start(res)
+        Animated.parallel([
+          snapSpring(id1, r2, c2, 10, 240),
+          snapSpring(id2, r1, c1, 10, 240),
+        ]).start(res)
       );
-      processMatches(matches, 0);
+      processMatches(matches); // fire-and-forget; locked until cascade ends
+
     } else {
-      // Invalid — snap forward, bounce back
+      // Invalid: snap forward briefly then bounce back
       grid[r1][c1] = id1;
       grid[r2][c2] = id2;
+
+      // Snap toward target (gives feedback)
       await new Promise(res =>
-        Animated.parallel([springTo(id1,r2,c2,7,200), springTo(id2,r1,c1,7,200)]).start(res)
+        Animated.parallel([
+          Animated.timing(getAnim(id1).x, { toValue: c2 * CELL, duration: INVALID_FWD_MS, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(getAnim(id1).y, { toValue: r2 * CELL, duration: INVALID_FWD_MS, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(getAnim(id2).x, { toValue: c1 * CELL, duration: INVALID_FWD_MS, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(getAnim(id2).y, { toValue: r1 * CELL, duration: INVALID_FWD_MS, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        ]).start(res)
       );
+      // Bounce back with spring (satisfying elastic rebound)
       await new Promise(res =>
-        Animated.parallel([springTo(id1,r1,c1,5,120), springTo(id2,r2,c2,5,120)]).start(res)
+        Animated.parallel([
+          snapSpring(id1, r1, c1, 7, 160),
+          snapSpring(id2, r2, c2, 7, 160),
+        ]).start(res)
       );
       locked.current = false;
     }
@@ -361,23 +433,23 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
       const r = Math.floor(locationY / CELL);
       if (r >= 0 && r < GRID_ROWS && c >= 0 && c < GRID_COLS) {
         const id = gridRef.current[r][c];
-        if (id) drag.current = { r, c, id, dir: null, nid: null };
+        if (id) drag.current = { r, c, id, dir: null, nid: null, nr: null, nc: null };
       }
     },
 
     onPanResponderMove: (_, gs) => {
       if (!drag.current || locked.current || paused) return;
       const { r, c, id } = drag.current;
-      const { dx, dy } = gs;
+      const { dx, dy }   = gs;
 
-      // Lock swipe direction on first significant movement
+      // Lock direction on first significant movement
       if (!drag.current.dir) {
         if (Math.abs(dx) > 6 || Math.abs(dy) > 6)
           drag.current.dir = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
         else return;
       }
 
-      const max  = CELL;
+      const max = CELL;
       let cdx = 0, cdy = 0, nr = r, nc = c;
 
       if (drag.current.dir === 'h') {
@@ -388,28 +460,31 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
         nr  = r + (cdy > 0 ? 1 : -1);
       }
 
-      // Move dragged block with finger
+      // Dragged block follows finger directly (zero latency via setValue)
       const a = getAnim(id);
       a.x.setValue(c * CELL + cdx);
       a.y.setValue(r * CELL + cdy);
 
-      // Push neighbor
+      // Neighbor pushed in opposite direction proportionally
       if (nr >= 0 && nr < GRID_ROWS && nc >= 0 && nc < GRID_COLS) {
         const nid = gridRef.current[nr][nc];
-        if (nid && nid !== drag.current.nid) drag.current.nid = nid;
         if (nid) {
-          const an = getAnim(nid);
-          an.x.setValue(nc * CELL - cdx);
-          an.y.setValue(nr * CELL - cdy);
+          // Store neighbor coords so we can snap back cleanly without __getValue()
+          if (nid !== drag.current.nid) {
+            drag.current.nid = nid;
+            drag.current.nr  = nr;
+            drag.current.nc  = nc;
+          }
+          getAnim(nid).x.setValue(nc * CELL - cdx);
+          getAnim(nid).y.setValue(nr * CELL - cdy);
         }
       }
     },
 
     onPanResponderRelease: (_, gs) => {
       if (!drag.current) return;
-      const { r, c, id, dir } = drag.current;
+      const { r, c, id, dir, nid, nr: nRow, nc: nCol } = drag.current;
       const { dx, dy } = gs;
-      const prev = drag.current;
       drag.current = null;
 
       const threshold = CELL * 0.28;
@@ -422,32 +497,29 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
         locked.current = true;
         doSwap(r, c, tr, tc);
       } else {
-        // Snap back to home position
-        Animated.parallel([
-          springTo(id, r, c, 6, 180),
-          ...(prev.nid ? [springTo(prev.nid,
-            Math.floor(getAnim(prev.nid).y.__getValue() / CELL + 0.5),
-            Math.floor(getAnim(prev.nid).x.__getValue() / CELL + 0.5), 6, 180)] : []),
-        ]).start();
+        // Below threshold or edge — snap back
+        const snaps = [snapSpring(id, r, c, 8, 200)];
+        if (nid && nRow != null) snaps.push(snapSpring(nid, nRow, nCol, 8, 200));
+        Animated.parallel(snaps).start();
       }
     },
 
     onPanResponderTerminate: () => {
-      if (drag.current) {
-        const { r, c, id, nid } = drag.current;
-        drag.current = null;
-        springTo(id, r, c, 5, 150).start();
-        // nid will snap via its own spring if referenced
-      }
+      if (!drag.current) return;
+      const { r, c, id, nid, nr: nRow, nc: nCol } = drag.current;
+      drag.current = null;
+      const snaps = [snapSpring(id, r, c, 6, 160)];
+      if (nid && nRow != null) snaps.push(snapSpring(nid, nRow, nCol, 6, 160));
+      Animated.parallel(snaps).start();
     },
   }), [paused, doSwap]);
 
-  // Init anims on first render
+  // Run on every render (cheap — only creates Values for blocks not yet tracked)
   initAnims();
 
-  // Build id→{r,c} map for rendering
+  // Map id → {r, c} for rendering; recomputes only when liveIds changes
   const posMap = useMemo(() => {
-    const m = new Map();
+    const m    = new Map();
     const grid = gridRef.current;
     if (!grid) return m;
     for (let r = 0; r < GRID_ROWS; r++)
@@ -494,7 +566,7 @@ const styles = StyleSheet.create({
     borderRadius:    12,
     backgroundColor: 'rgba(10,20,35,0.6)',
     padding:         4,
-    overflow:        'hidden',
+    overflow:        'hidden', // clips new blocks initialized above grid
   },
   inner: { position: 'relative' },
 });
