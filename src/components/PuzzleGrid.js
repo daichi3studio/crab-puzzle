@@ -110,18 +110,18 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
   const dragDir   = useRef(null);   // 'h' | 'v' | null (direction locked)
   const neighborCell = useRef(null); // the cell being pushed
 
-  // ─── Animate match pop ───────────────────────────────────────
+  // ─── Animate match pop (all at once — fast!) ─────────────────
   function animatePop(matches) {
     const anims = [];
     matches.forEach(key => {
       const [r, c] = key.split(',').map(Number);
       const o = getOffset(r, c);
-      anims.push(Animated.parallel([
-        Animated.timing(o.scale,   { toValue: 1.3, duration: 80, useNativeDriver: true }),
-        Animated.timing(o.opacity, { toValue: 0,   duration: 150, useNativeDriver: true }),
-      ]));
+      anims.push(
+        Animated.timing(o.scale,   { toValue: 1.25, duration: 90, useNativeDriver: true }),
+        Animated.timing(o.opacity, { toValue: 0,    duration: 90, useNativeDriver: true }),
+      );
     });
-    return new Promise(res => Animated.stagger(15, anims).start(res));
+    return new Promise(res => Animated.parallel(anims).start(res));
   }
 
   // ─── Animate gravity ────────────────────────────────────────
@@ -149,15 +149,15 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
         anims.push(
           Animated.spring(o.dy, {
             toValue:  0,
-            friction: 5,
-            tension:  90,
+            friction: 6,
+            tension:  160,
             useNativeDriver: true,
           })
         );
       }
     }
     if (anims.length === 0) return Promise.resolve();
-    return new Promise(res => Animated.stagger(10, anims).start(res));
+    return new Promise(res => Animated.parallel(anims).start(res));
   }
 
   // ─── Process chain ──────────────────────────────────────────
@@ -199,13 +199,11 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
     resetAllOffsets();
     setGrid(filled);
     setRenderKey(k => k + 1);
-    await new Promise(r => setTimeout(r, 20));
     await animateDrops(cleared, filled);
 
-    // Cascade check
+    // Cascade check — immediately
     const next = findMatches(filled);
     if (next.size > 0) {
-      await new Promise(r => setTimeout(r, 80));
       processMatches(filled, next, cascade + 1);
     } else {
       setLocked(false);
@@ -227,17 +225,16 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
 
       await new Promise(res => {
         Animated.parallel([
-          Animated.spring(oFrom.dx, { toValue: (toC - fromC) * CELL, friction: 6, tension: 140, useNativeDriver: true }),
-          Animated.spring(oFrom.dy, { toValue: (toR - fromR) * CELL, friction: 6, tension: 140, useNativeDriver: true }),
-          Animated.spring(oTo.dx,   { toValue: (fromC - toC) * CELL, friction: 6, tension: 140, useNativeDriver: true }),
-          Animated.spring(oTo.dy,   { toValue: (fromR - toR) * CELL, friction: 6, tension: 140, useNativeDriver: true }),
+          Animated.spring(oFrom.dx, { toValue: (toC - fromC) * CELL, friction: 7, tension: 200, useNativeDriver: true }),
+          Animated.spring(oFrom.dy, { toValue: (toR - fromR) * CELL, friction: 7, tension: 200, useNativeDriver: true }),
+          Animated.spring(oTo.dx,   { toValue: (fromC - toC) * CELL, friction: 7, tension: 200, useNativeDriver: true }),
+          Animated.spring(oTo.dy,   { toValue: (fromR - toR) * CELL, friction: 7, tension: 200, useNativeDriver: true }),
         ]).start(res);
       });
 
       resetAllOffsets();
       setGrid(next);
       setRenderKey(k => k + 1);
-      await new Promise(r => setTimeout(r, 30));
       processMatches(next, matches, 0);
     } else {
       // Invalid — bounce back
