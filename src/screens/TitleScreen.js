@@ -1,18 +1,43 @@
-import React, { useEffect } from 'react';
+/**
+ * TitleScreen v2 — Clean design with selected crab displayed
+ *
+ * Layout:
+ *   CRAB PUZZLE (title)
+ *   [Selected crab — large, animated]
+ *   "Bit" (char name)
+ *   [▶ PLAY] button
+ *   [SELECT CRAB] button
+ *   Easy ○●○ Hard (toggle)
+ */
+import React, { useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  StatusBar, SafeAreaView,
+  StatusBar, SafeAreaView, Animated,
 } from 'react-native';
 import CrabSprite from '../components/CrabSprite';
 import { useGameStore } from '../store/gameStore';
-import { COLORS } from '../constants/gameConfig';
+import { COLORS, ALL_CHARS } from '../constants/gameConfig';
+
+function getCharDef(key) { return ALL_CHARS.find(c => c.key === key) ?? ALL_CHARS[0]; }
 
 export default function TitleScreen({ navigation }) {
-  const hydrate = useGameStore(s => s.hydrate);
+  const { selectedChar, difficulty, setDifficulty, hydrate } = useGameStore();
+  const charDef = getCharDef(selectedChar);
 
+  useEffect(() => { hydrate(); }, [hydrate]);
+
+  // Idle bounce animation for the crab
+  const bounce = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    hydrate();
-  }, [hydrate]);
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(bounce, { toValue: -8, duration: 800, useNativeDriver: true }),
+        Animated.timing(bounce, { toValue: 0,  duration: 800, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -20,35 +45,62 @@ export default function TitleScreen({ navigation }) {
 
       <View style={styles.container}>
         {/* Title */}
-        <View style={styles.titleBlock}>
-          <Text style={styles.titleTop}>CRAB</Text>
-          <Text style={styles.titleBot}>PUZZLE</Text>
+        <View style={styles.titleWrap}>
+          <Text style={styles.title1}>CRAB</Text>
+          <Text style={styles.title2}>PUZZLE</Text>
         </View>
 
-        {/* Sprite showcase */}
-        <View style={styles.spriteRow}>
-          <CrabSprite phase={1} size={64} facingLeft />
-          <CrabSprite phase={2} size={72} />
-          <CrabSprite phase={3} char="pyramid" size={64} facingLeft />
+        {/* Selected crab showcase */}
+        <View style={styles.showcase}>
+          <Animated.View style={{ transform: [{ translateY: bounce }] }}>
+            <CrabSprite phase={charDef.phase} char={charDef.char} size={96} />
+          </Animated.View>
+          <Text style={styles.charName}>{charDef.name}</Text>
         </View>
 
-        {/* Buttons */}
+        {/* PLAY button */}
         <TouchableOpacity
-          style={[styles.btn, styles.btnPrimary]}
-          onPress={() => navigation.navigate('Difficulty')}
+          style={styles.playBtn}
+          activeOpacity={0.8}
+          onPress={() => navigation.navigate('Game')}
         >
-          <Text style={styles.btnText}>PLAY</Text>
+          <Text style={styles.playBtnText}>▶  PLAY</Text>
         </TouchableOpacity>
 
+        {/* SELECT CRAB */}
         <TouchableOpacity
-          style={[styles.btn, styles.btnSecondary]}
+          style={styles.secondaryBtn}
+          activeOpacity={0.8}
           onPress={() => navigation.navigate('CharSelect')}
         >
-          <Text style={styles.btnText}>SELECT CHAR</Text>
+          <Text style={styles.secondaryBtnText}>SELECT CRAB</Text>
         </TouchableOpacity>
 
-        {/* Version */}
-        <Text style={styles.ver}>v1.0  MyOpenCrab</Text>
+        {/* Difficulty toggle */}
+        <View style={styles.diffRow}>
+          <TouchableOpacity onPress={() => setDifficulty('easy')}>
+            <Text style={[
+              styles.diffLabel,
+              difficulty === 'easy' && styles.diffActive,
+            ]}>EASY</Text>
+          </TouchableOpacity>
+
+          <View style={styles.diffTrack}>
+            <View style={[
+              styles.diffThumb,
+              difficulty === 'hard' && styles.diffThumbRight,
+            ]} />
+          </View>
+
+          <TouchableOpacity onPress={() => setDifficulty('hard')}>
+            <Text style={[
+              styles.diffLabel,
+              difficulty === 'hard' && styles.diffActiveHard,
+            ]}>HARD</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.ver}>v2.0  MyOpenCrab</Text>
       </View>
     </SafeAreaView>
   );
@@ -57,54 +109,109 @@ export default function TitleScreen({ navigation }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   container: {
-    flex: 1,
-    alignItems: 'center',
+    flex:           1,
+    alignItems:     'center',
     justifyContent: 'center',
-    gap: 24,
+    gap:            20,
     paddingHorizontal: 24,
   },
-  titleBlock: { alignItems: 'center', gap: 4 },
-  titleTop: {
-    fontFamily: 'PressStart2P',
-    fontSize:   30,
-    color:      COLORS.accent,
+
+  // Title
+  titleWrap: { alignItems: 'center', gap: 2 },
+  title1: {
+    fontSize:      32,
+    fontWeight:     '900',
+    color:         COLORS.accent,
+    letterSpacing: 8,
+  },
+  title2: {
+    fontSize:      24,
+    fontWeight:     '900',
+    color:         COLORS.gold,
     letterSpacing: 6,
   },
-  titleBot: {
-    fontFamily: 'PressStart2P',
-    fontSize:   22,
-    color:      COLORS.gold,
-    letterSpacing: 4,
+
+  // Showcase
+  showcase: { alignItems: 'center', gap: 8, marginVertical: 4 },
+  charName: {
+    fontSize:      14,
+    fontWeight:     '800',
+    color:         COLORS.textMid,
+    letterSpacing: 2,
   },
-  spriteRow: {
-    flexDirection: 'row',
-    alignItems:    'flex-end',
-    gap: 16,
-    marginVertical: 8,
-  },
-  btn: {
-    width:        220,
-    paddingVertical: 14,
-    borderRadius: 6,
-    borderWidth:  2,
-    alignItems:   'center',
-  },
-  btnPrimary: {
+
+  // Buttons
+  playBtn: {
+    width:           220,
+    paddingVertical: 16,
+    borderRadius:    12,
     backgroundColor: COLORS.accent,
-    borderColor:     COLORS.accent,
+    alignItems:      'center',
+    shadowColor:     COLORS.accent,
+    shadowRadius:    12,
+    shadowOpacity:   0.4,
+    elevation:       6,
   },
-  btnSecondary: {
-    backgroundColor: 'transparent',
+  playBtnText: {
+    fontSize:      16,
+    fontWeight:     '900',
+    color:         '#FFFFFF',
+    letterSpacing: 3,
+  },
+  secondaryBtn: {
+    width:           220,
+    paddingVertical: 14,
+    borderRadius:    12,
+    borderWidth:     2,
     borderColor:     COLORS.border,
+    alignItems:      'center',
   },
-  btnText: {
-    fontFamily: 'PressStart2P',
-    fontSize:   13,
-    color:      COLORS.text,
+  secondaryBtnText: {
+    fontSize:      13,
+    fontWeight:     '800',
+    color:         COLORS.textMid,
+    letterSpacing: 2,
   },
+
+  // Difficulty toggle
+  diffRow: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           12,
+    marginTop:     4,
+  },
+  diffLabel: {
+    fontSize:   11,
+    fontWeight: '800',
+    color:      COLORS.textDim,
+  },
+  diffActive:     { color: COLORS.accent },
+  diffActiveHard: { color: '#FF6666' },
+  diffTrack: {
+    width:           40,
+    height:          22,
+    borderRadius:    11,
+    backgroundColor: COLORS.panel,
+    borderWidth:     1,
+    borderColor:     COLORS.border,
+    justifyContent:  'center',
+    paddingHorizontal: 2,
+  },
+  diffThumb: {
+    width:           16,
+    height:          16,
+    borderRadius:    8,
+    backgroundColor: COLORS.accent,
+    alignSelf:       'flex-start',
+  },
+  diffThumbRight: {
+    backgroundColor: '#FF6666',
+    alignSelf:       'flex-end',
+  },
+
   ver: {
-    fontFamily: 'PressStart2P',
-    fontSize:   8,
+    fontSize:   9,
+    fontWeight: '600',
     color:      COLORS.textDim,
     marginTop:  8,
   },

@@ -1,91 +1,81 @@
 /**
- * PuzzleGrid — core match-3 engine
+ * PuzzleGrid v2 — Swipe-based match-3 with smooth animations
  *
- * Props:
- *   blockDefs   : array of block definitions (EASY_BLOCKS or HARD_BLOCKS)
- *   onScoreAdd  : (pts) => void
- *   onCombo     : (cascadeLevel) => void
- *   paused      : boolean
+ * Key changes from v1:
+ *  - Swipe (PanResponder) to swap, not tap-tap
+ *  - Robot = wild card (matches any adjacent)
+ *  - Pyramid = rare, huge bonus
+ *  - Smoother cascade timing
  */
-
-import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { View, StyleSheet } from 'react-native';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { View, StyleSheet, PanResponder, Animated } from 'react-native';
 import BlockTile from './BlockTile';
 import {
-  GRID_COLS, GRID_ROWS, TILE_SIZE, TILE_GAP,
-  SHIELD_CHANCE, RANDOM_CHANCE, PYRAMID_CHANCE,
-  BASE_SCORES, EXTRA_PER, CASCADE_MULT,
+  GRID_COLS, GRID_ROWS, TILE_SIZE, TILE_GAP, SWIPE_THRESHOLD,
+  BLOCKS, SPECIAL_ROBOT, SPECIAL_PYRAMID,
+  ROBOT_RATE_EASY, ROBOT_RATE_HARD, PYRAMID_RATE_EASY, PYRAMID_RATE_HARD,
+  SCORE_MATCH3, SCORE_MATCH4, SCORE_MATCH5, SCORE_EXTRA, SCORE_PYRAMID,
+  CASCADE_MULT,
 } from '../constants/gameConfig';
 
-// ─── Grid helpers ────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────
 
-function randomType(blockDefs) {
-  // Pyramid is last in HARD_BLOCKS and marked rare — pick with lower probability
-  const lastIdx = blockDefs.length - 1;
-  const lastDef = blockDefs[lastIdx];
-  if (lastDef?.rare) {
-    if (Math.random() < PYRAMID_CHANCE) return lastIdx;
-    return Math.floor(Math.random() * lastIdx);
-  }
-  return Math.floor(Math.random() * blockDefs.length);
+function randomType() {
+  return Math.floor(Math.random() * BLOCKS.length);
 }
 
-function randomSpecial() {
+function randomSpecial(hard) {
   const r = Math.random();
-  if (r < SHIELD_CHANCE)  return 'shield';
-  if (r < SHIELD_CHANCE + RANDOM_CHANCE) return 'random';
+  const pyramidRate = hard ? PYRAMID_RATE_HARD : PYRAMID_RATE_EASY;
+  const robotRate   = hard ? ROBOT_RATE_HARD   : ROBOT_RATE_EASY;
+  if (r < pyramidRate) return 'pyramid';
+  if (r < pyramidRate + robotRate) return 'robot';
   return null;
 }
 
-function makeCell(blockDefs) {
-  return { type: randomType(blockDefs), special: randomSpecial(), shieldHits: 0 };
-}
-
-function makeGrid(blockDefs) {
-  let grid;
-  // Re-generate until there are no initial matches
-  do {
-    grid = Array.from({ length: GRID_ROWS }, () =>
-      Array.from({ length: GRID_COLS }, () => makeCell(blockDefs))
-    );
-  } while (findMatches(grid).size > 0);
-  return grid;
+function makeCell(hard) {
+  return { type: randomType(), special: randomSpecial(hard) };
 }
 
 function deepCopy(grid) {
   return grid.map(row => row.map(cell => ({ ...cell })));
 }
 
-// Returns Set of "r,c" strings that are part of a match
+// Check if two cells match (robot = wild card matches anything)
+function cellsMatch(a, b) {
+  if (!a || !b) return false;
+  if (a.type === -1 || b.type === -1) return false;
+  if (a.special === 'robot' || b.special === 'robot') return true;
+  return a.type === b.type;
+}
+
 function findMatches(grid) {
   const hits = new Set();
 
-  // Horizontal
+  // Horizontal runs
   for (let r = 0; r < GRID_ROWS; r++) {
-    let run = 1;
+    let start = 0;
     for (let c = 1; c <= GRID_COLS; c++) {
-      const same = c < GRID_COLS && grid[r][c].type === grid[r][c - 1].type &&
-                   grid[r][c - 1].type !== -1 && grid[r][c].type !== -1;
-      if (same) {
-        run++;
-      } else {
-        if (run >= 3) for (let k = c - run; k < c; k++) hits.add(`${r},${k}`);
-        run = 1;
+      const same = c < GRID_COLS && cellsMatch(grid[r][c], grid[r][c - 1]);
+      if (!same) {
+        if (c - start >= 3) {
+          for (let k = start; k < c; k++) hits.add(`${r},${k}`);
+        }
+        start = c;
       }
     }
   }
 
-  // Vertical
+  // Vertical runs
   for (let c = 0; c < GRID_COLS; c++) {
-    let run = 1;
+    let start = 0;
     for (let r = 1; r <= GRID_ROWS; r++) {
-      const same = r < GRID_ROWS && grid[r][c].type === grid[r - 1][c].type &&
-                   grid[r - 1][c].type !== -1 && grid[r][c].type !== -1;
-      if (same) {
-        run++;
-      } else {
-        if (run >= 3) for (let k = r - run; k < r; k++) hits.add(`${k},${c}`);
-        run = 1;
+      const same = r < GRID_ROWS && cellsMatch(grid[r][c], grid[r - 1][c]);
+      if (!same) {
+        if (r - start >= 3) {
+          for (let k = start; k < r; k++) hits.add(`${k},${c}`);
+        }
+        start = r;
       }
     }
   }
@@ -93,74 +83,63 @@ function findMatches(grid) {
   return hits;
 }
 
-// Score for a set of matched cells
-function calcScore(matches, blockDefs, cascade) {
-  // Count distinct groups (simplified: treat total cells)
-  const n = matches.size;
+function makeCleanGrid(hard) {
+  let grid;
+  let attempts = 0;
+  do {
+    grid = Array.from({ length: GRID_ROWS }, () =>
+      Array.from({ length: GRID_COLS }, () => makeCell(hard))
+    );
+    attempts++;
+  } while (findMatches(grid).size > 0 && attempts < 100);
+  return grid;
+}
+
+function calcScore(matchCount, cascade) {
   let base;
-  if      (n <= 2) base = 0;
-  else if (n <= 3) base = BASE_SCORES[3];
-  else if (n <= 4) base = BASE_SCORES[4];
-  else if (n <= 5) base = BASE_SCORES[5];
-  else             base = BASE_SCORES[5] + (n - 5) * EXTRA_PER;
-
-  // Pyramid bonus: 500 pts per pyramid matched
-  let pyramidBonus = 0;
-  // (We don't have easy access to which cells are pyramid here, so bonus added in GameScreen)
-
+  if      (matchCount <= 3) base = SCORE_MATCH3;
+  else if (matchCount <= 4) base = SCORE_MATCH4;
+  else if (matchCount <= 5) base = SCORE_MATCH5;
+  else                      base = SCORE_MATCH5 + (matchCount - 5) * SCORE_EXTRA;
   return Math.floor(base * Math.pow(CASCADE_MULT, cascade));
 }
 
-// Apply gravity: shift non-empty cells down, nulls float up
-function applyGravity(grid, blockDefs) {
-  const newGrid = deepCopy(grid);
+function applyGravity(grid, hard) {
+  const next = deepCopy(grid);
   for (let c = 0; c < GRID_COLS; c++) {
     const col = [];
     for (let r = 0; r < GRID_ROWS; r++) {
-      if (newGrid[r][c].type !== -1) col.push({ ...newGrid[r][c] });
+      if (next[r][c].type !== -1) col.push({ ...next[r][c] });
     }
-    // Fill from bottom
     for (let r = GRID_ROWS - 1; r >= 0; r--) {
-      if (col.length > 0) {
-        newGrid[r][c] = col.pop();
-      } else {
-        newGrid[r][c] = makeCell(blockDefs);
-      }
+      next[r][c] = col.length > 0 ? col.pop() : makeCell(hard);
     }
   }
-  return newGrid;
+  return next;
 }
 
 // ─── Component ───────────────────────────────────────────────────
 
-export default function PuzzleGrid({ blockDefs, onScoreAdd, onCombo, paused }) {
-  const [grid, setGrid]         = useState(() => makeGrid(blockDefs));
+export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
+  const [grid, setGrid]         = useState(() => makeCleanGrid(hard));
   const [selected, setSelected] = useState(null);
-  const [locked, setLocked]     = useState(false); // block input during cascade
+  const [locked, setLocked]     = useState(false);
 
-  const blockDefsRef = useRef(blockDefs);
-  blockDefsRef.current = blockDefs;
+  const hardRef = useRef(hard);
+  hardRef.current = hard;
 
-  // ─── Random-block ticker (changes type every 4s) ─────────────
-  useEffect(() => {
-    if (paused) return;
-    const id = setInterval(() => {
-      setGrid(prev => {
-        const next = deepCopy(prev);
-        for (let r = 0; r < GRID_ROWS; r++) {
-          for (let c = 0; c < GRID_COLS; c++) {
-            if (next[r][c].special === 'random') {
-              next[r][c].type = randomType(blockDefsRef.current);
-            }
-          }
-        }
-        return next;
-      });
-    }, 4000);
-    return () => clearInterval(id);
-  }, [paused]);
+  // ─── Swipe state ──────────────────────────────────────────────
+  const touchStart = useRef(null);
 
-  // ─── Match processing chain ──────────────────────────────────
+  const getCellAt = useCallback((x, y) => {
+    const cellW = TILE_SIZE + TILE_GAP;
+    const col = Math.floor(x / cellW);
+    const row = Math.floor(y / cellW);
+    if (row < 0 || row >= GRID_ROWS || col < 0 || col >= GRID_COLS) return null;
+    return { row, col };
+  }, []);
+
+  // ─── Match processing ────────────────────────────────────────
   const processMatches = useCallback((currentGrid, matches, cascade) => {
     if (matches.size === 0) {
       setLocked(false);
@@ -168,40 +147,27 @@ export default function PuzzleGrid({ blockDefs, onScoreAdd, onCombo, paused }) {
     }
 
     // Score
-    const pts = calcScore(matches, blockDefsRef.current, cascade);
-
-    // Count pyramid bonuses
+    let pts = calcScore(matches.size, cascade);
     let pyramidBonus = 0;
     matches.forEach(key => {
       const [r, c] = key.split(',').map(Number);
-      const def = blockDefsRef.current[currentGrid[r][c].type];
-      if (def?.rare) pyramidBonus += def.scoreBonus ?? 500;
+      if (currentGrid[r][c].special === 'pyramid') pyramidBonus += SCORE_PYRAMID;
     });
-
     onScoreAdd(pts + pyramidBonus);
     if (cascade > 0) onCombo(cascade);
 
-    // Mark matched cells as -1 (or handle shields)
+    // Remove matched cells
     const next = deepCopy(currentGrid);
     matches.forEach(key => {
       const [r, c] = key.split(',').map(Number);
-      const cell = next[r][c];
-      if (cell.special === 'shield' && cell.shieldHits === 0) {
-        // First hit: remove shield, keep block
-        next[r][c] = { ...cell, special: null, shieldHits: 1 };
-      } else {
-        next[r][c] = { type: -1, special: null, shieldHits: 0 };
-      }
+      next[r][c] = { type: -1, special: null };
     });
-
     setGrid(next);
 
-    // Gravity + refill after short delay
+    // Gravity + cascade
     setTimeout(() => {
-      const filled = applyGravity(next, blockDefsRef.current);
+      const filled = applyGravity(next, hardRef.current);
       setGrid(filled);
-
-      // Check cascade
       setTimeout(() => {
         const newMatches = findMatches(filled);
         if (newMatches.size > 0) {
@@ -209,63 +175,85 @@ export default function PuzzleGrid({ blockDefs, onScoreAdd, onCombo, paused }) {
         } else {
           setLocked(false);
         }
-      }, 250);
-    }, 220);
+      }, 200);
+    }, 180);
   }, [onScoreAdd, onCombo]);
 
-  // ─── Swap logic ──────────────────────────────────────────────
-  const handlePress = useCallback((row, col) => {
+  // ─── Swap logic ───────────────────────────────────────────────
+  const attemptSwap = useCallback((fromR, fromC, toR, toC) => {
     if (locked || paused) return;
+    if (toR < 0 || toR >= GRID_ROWS || toC < 0 || toC >= GRID_COLS) return;
 
-    if (!selected) {
-      setSelected({ row, col });
-      return;
-    }
+    setLocked(true);
+    const next = deepCopy(grid);
+    const tmp = next[fromR][fromC];
+    next[fromR][fromC] = next[toR][toC];
+    next[toR][toC] = tmp;
 
-    const dr = Math.abs(selected.row - row);
-    const dc = Math.abs(selected.col - col);
-
-    if (dr + dc === 1) {
-      // Adjacent — attempt swap
-      setSelected(null);
-      setLocked(true);
-
-      const next = deepCopy(grid);
-      const tmp  = next[selected.row][selected.col];
-      next[selected.row][selected.col] = next[row][col];
-      next[row][col]                   = tmp;
-
-      const matches = findMatches(next);
-      if (matches.size > 0) {
-        setGrid(next);
-        setTimeout(() => processMatches(next, matches, 0), 80);
-      } else {
-        // Invalid swap — snap back
-        setLocked(false);
-      }
+    const matches = findMatches(next);
+    if (matches.size > 0) {
+      setGrid(next);
+      setTimeout(() => processMatches(next, matches, 0), 100);
     } else {
-      // Not adjacent — reselect
-      setSelected({ row, col });
+      setLocked(false);
     }
-  }, [selected, locked, paused, grid, processMatches]);
+  }, [grid, locked, paused, processMatches]);
 
-  // ─── Render ──────────────────────────────────────────────────
+  // ─── PanResponder (swipe on grid) ────────────────────────────
+  const panResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => !locked && !paused,
+    onMoveShouldSetPanResponder:  () => !locked && !paused,
+    onPanResponderGrant: (evt) => {
+      const { locationX, locationY } = evt.nativeEvent;
+      touchStart.current = { x: locationX, y: locationY };
+      const cell = getCellAt(locationX, locationY);
+      setSelected(cell);
+    },
+    onPanResponderRelease: (evt, gs) => {
+      if (!touchStart.current) return;
+      const { dx, dy } = gs;
+      const cell = getCellAt(touchStart.current.x, touchStart.current.y);
+      setSelected(null);
+      touchStart.current = null;
+      if (!cell) return;
+
+      let dr = 0, dc = 0;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        if (Math.abs(dx) > SWIPE_THRESHOLD) dc = dx > 0 ? 1 : -1;
+      } else {
+        if (Math.abs(dy) > SWIPE_THRESHOLD) dr = dy > 0 ? 1 : -1;
+      }
+      if (dr !== 0 || dc !== 0) {
+        attemptSwap(cell.row, cell.col, cell.row + dr, cell.col + dc);
+      }
+    },
+    onPanResponderTerminate: () => {
+      setSelected(null);
+      touchStart.current = null;
+    },
+  }), [locked, paused, getCellAt, attemptSwap]);
+
+  // ─── Render ───────────────────────────────────────────────────
+  const gridWidth  = GRID_COLS * (TILE_SIZE + TILE_GAP) - TILE_GAP;
+  const gridHeight = GRID_ROWS * (TILE_SIZE + TILE_GAP) - TILE_GAP;
+
   return (
-    <View style={styles.grid}>
+    <View
+      style={[styles.grid, { width: gridWidth, height: gridHeight }]}
+      {...panResponder.panHandlers}
+    >
       {grid.map((row, r) => (
         <View key={r} style={styles.row}>
           {row.map((cell, c) => {
             if (cell.type === -1) return <View key={c} style={styles.hole} />;
-            const def = blockDefs[cell.type] ?? blockDefs[0];
+            const def = BLOCKS[cell.type] ?? BLOCKS[0];
             const isSel = selected?.row === r && selected?.col === c;
             return (
               <BlockTile
-                key={c}
+                key={`${r}-${c}-${cell.type}-${cell.special}`}
                 block={cell}
                 blockDef={def}
                 selected={isSel}
-                disabled={locked || paused}
-                onPress={() => handlePress(r, c)}
               />
             );
           })}
@@ -277,11 +265,14 @@ export default function PuzzleGrid({ blockDefs, onScoreAdd, onCombo, paused }) {
 
 const styles = StyleSheet.create({
   grid: {
-    gap: TILE_GAP,
+    borderRadius: 8,
+    overflow:     'hidden',
+    padding:      2,
   },
   row: {
     flexDirection: 'row',
-    gap: TILE_GAP,
+    gap:           TILE_GAP,
+    marginBottom:  TILE_GAP,
   },
   hole: {
     width:  TILE_SIZE,

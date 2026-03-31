@@ -15,7 +15,7 @@ export default function CharSelectScreen({ navigation }) {
   };
 
   const lockLabel = (ch) => {
-    if (ch.requireHard > 0) return `HARD WIN ×${ch.requireHard}`;
+    if (ch.requireHard > 0) return `HARD ×${ch.requireHard}`;
     if (ch.requireWins > 0) return `WIN ×${ch.requireWins}`;
     return '';
   };
@@ -23,10 +23,8 @@ export default function CharSelectScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <Text style={styles.heading}>SELECT CHAR</Text>
-        <Text style={styles.wins}>
-          WINS: {totalWins}  HARD: {hardWins}
-        </Text>
+        <Text style={styles.heading}>SELECT CRAB</Text>
+        <Text style={styles.stats}>WINS {totalWins}  •  HARD {hardWins}</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.grid}>
@@ -40,25 +38,16 @@ export default function CharSelectScreen({ navigation }) {
                 styles.card,
                 active    && styles.cardActive,
                 !unlocked && styles.cardLocked,
-                ch.key === 'pyramid' && styles.cardPyramid,
               ]}
               onPress={() => unlocked && setSelectedChar(ch.key)}
               activeOpacity={unlocked ? 0.75 : 1}
             >
-              <CrabSprite
-                phase={ch.phase}
-                char={ch.char}
-                size={52}
-              />
-              <Text style={[styles.charName, !unlocked && styles.textLocked]}>
-                {ch.name.toUpperCase()}
+              <CrabSprite phase={ch.phase} char={ch.char} size={48} />
+              <Text style={[styles.name, !unlocked && { color: COLORS.textDim }]}>
+                {ch.name}
               </Text>
 
-              {active && (
-                <View style={styles.activeBadge}>
-                  <Text style={styles.activeBadgeText}>ON</Text>
-                </View>
-              )}
+              {active && <View style={styles.activeDot} />}
 
               {!unlocked && (
                 <View style={styles.lockBadge}>
@@ -78,102 +67,39 @@ export default function CharSelectScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
-  header: {
-    alignItems: 'center',
-    paddingTop: 16,
-    paddingBottom: 12,
-    gap: 6,
-  },
-  heading: {
-    fontFamily: 'PressStart2P',
-    fontSize:   16,
-    color:      COLORS.accent,
-  },
-  wins: {
-    fontFamily: 'PressStart2P',
-    fontSize:   8,
-    color:      COLORS.textDim,
-  },
+  safe:   { flex: 1, backgroundColor: COLORS.bg },
+  header: { alignItems: 'center', paddingTop: 16, paddingBottom: 12, gap: 4 },
+  heading: { fontSize: 18, fontWeight: '900', color: COLORS.accent, letterSpacing: 3 },
+  stats:   { fontSize: 10, fontWeight: '700', color: COLORS.textDim },
+
   grid: {
-    flexDirection:   'row',
-    flexWrap:        'wrap',
-    justifyContent:  'center',
-    gap:             12,
-    paddingHorizontal: 16,
-    paddingBottom:   16,
+    flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center',
+    gap: 12, paddingHorizontal: 16, paddingBottom: 16,
   },
   card: {
-    width:          100,
-    height:         110,
-    backgroundColor: COLORS.panel,
-    borderRadius:   8,
-    borderWidth:    2,
-    borderColor:    COLORS.border,
-    alignItems:     'center',
-    justifyContent: 'center',
-    gap:            6,
-    position:       'relative',
-    overflow:       'hidden',
+    width: 96, height: 104, backgroundColor: COLORS.panel,
+    borderRadius: 12, borderWidth: 2, borderColor: COLORS.border,
+    alignItems: 'center', justifyContent: 'center', gap: 4,
+    position: 'relative', overflow: 'hidden',
   },
-  cardActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: '#0A1A2A',
-  },
-  cardLocked: {
-    opacity: 0.5,
-  },
-  cardPyramid: {
-    borderColor: '#D4A820',
-  },
-  charName: {
-    fontFamily: 'PressStart2P',
-    fontSize:   7,
-    color:      COLORS.text,
-  },
-  textLocked: {
-    color: COLORS.textDim,
-  },
-  activeBadge: {
-    position:        'absolute',
-    top:             4,
-    right:           4,
+  cardActive: { borderColor: COLORS.accent, backgroundColor: COLORS.panelLight },
+  cardLocked: { opacity: 0.45 },
+  name: { fontSize: 9, fontWeight: '800', color: COLORS.text, letterSpacing: 1 },
+
+  activeDot: {
+    position: 'absolute', top: 6, right: 6,
+    width: 8, height: 8, borderRadius: 4,
     backgroundColor: COLORS.accent,
-    borderRadius:    3,
-    paddingHorizontal: 4,
-    paddingVertical:   2,
-  },
-  activeBadgeText: {
-    fontFamily: 'PressStart2P',
-    fontSize:   6,
-    color:      '#000',
   },
   lockBadge: {
-    position:        'absolute',
-    bottom:          0,
-    left:            0,
-    right:           0,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingVertical: 3,
-    alignItems:      'center',
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)', paddingVertical: 3, alignItems: 'center',
   },
-  lockText: {
-    fontFamily: 'PressStart2P',
-    fontSize:   5,
-    color:      COLORS.gold,
-    textAlign:  'center',
-  },
+  lockText: { fontSize: 7, fontWeight: '800', color: COLORS.gold },
+
   doneBtn: {
-    margin:         16,
-    paddingVertical: 14,
-    borderRadius:   6,
-    borderWidth:    2,
-    borderColor:    COLORS.accent,
-    alignItems:     'center',
+    margin: 16, paddingVertical: 14, borderRadius: 12,
+    borderWidth: 2, borderColor: COLORS.accent, alignItems: 'center',
   },
-  doneBtnText: {
-    fontFamily: 'PressStart2P',
-    fontSize:   12,
-    color:      COLORS.accent,
-  },
+  doneBtnText: { fontSize: 13, fontWeight: '900', color: COLORS.accent, letterSpacing: 2 },
 });

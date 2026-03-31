@@ -1,112 +1,89 @@
 import React from 'react';
-import { TouchableOpacity, View, StyleSheet, Text } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import CrabSprite from './CrabSprite';
-import { TILE_SIZE, COLORS } from '../constants/gameConfig';
+import { TILE_SIZE, COLORS, SPECIAL_ROBOT, SPECIAL_PYRAMID } from '../constants/gameConfig';
 
 /**
- * block = { type: number, special: null|'shield'|'random' }
- * blockDef = { id, phase, char, bg, border, rare? }
+ * block  = { type: number, special: null|'robot'|'pyramid'|'shield' }
+ * blockDef = BLOCKS[type]  (regular) or SPECIAL_ROBOT / SPECIAL_PYRAMID
  */
-export default function BlockTile({ block, blockDef, selected, onPress, disabled }) {
+export default React.memo(function BlockTile({ block, blockDef, selected }) {
   if (!block || !blockDef) return <View style={styles.empty} />;
 
-  const isShield  = block.special === 'shield';
-  const isRandom  = block.special === 'random';
-  const isRare    = blockDef.rare;
+  const isRobot   = block.special === 'robot';
+  const isPyramid = block.special === 'pyramid';
+  const isSpecial = isRobot || isPyramid;
+
+  const bgColor     = isRobot   ? SPECIAL_ROBOT.color
+                    : isPyramid ? SPECIAL_PYRAMID.color
+                    : blockDef.color;
+  const borderColor = selected  ? '#FFFFFF'
+                    : isPyramid ? SPECIAL_PYRAMID.accent
+                    : isRobot   ? SPECIAL_ROBOT.accent
+                    : blockDef.accent;
+
+  const spritePhase = isRobot   ? 3 : isPyramid ? 3 : blockDef.phase;
+  const spriteChar  = isRobot   ? 'robot' : isPyramid ? 'pyramid' : blockDef.char;
 
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      disabled={disabled}
-      activeOpacity={0.75}
-      style={[
-        styles.tile,
-        { backgroundColor: blockDef.bg, borderColor: selected ? COLORS.selected : blockDef.border },
-        selected && styles.selectedTile,
-        isRare    && styles.rareTile,
-      ]}
-    >
-      {/* Character sprite */}
-      <CrabSprite
-        phase={blockDef.phase}
-        char={blockDef.char}
-        size={TILE_SIZE - 10}
-      />
+    <View style={[
+      styles.tile,
+      { backgroundColor: bgColor, borderColor },
+      selected  && styles.selected,
+      isPyramid && styles.pyramid,
+    ]}>
+      <CrabSprite phase={spritePhase} char={spriteChar} size={TILE_SIZE - 10} />
 
-      {/* Shield overlay */}
-      {isShield && (
-        <View style={styles.shieldOverlay} pointerEvents="none">
-          <Text style={styles.shieldIcon}>🛡</Text>
-        </View>
-      )}
+      {/* Subtle shine overlay */}
+      <View style={styles.shine} pointerEvents="none" />
 
-      {/* Random overlay */}
-      {isRandom && (
-        <View style={styles.randomOverlay} pointerEvents="none">
-          <Text style={styles.randomIcon}>?</Text>
-        </View>
-      )}
-
-      {/* Rare glow */}
-      {isRare && <View style={styles.rareGlow} pointerEvents="none" />}
-    </TouchableOpacity>
+      {/* Pyramid glow ring */}
+      {isPyramid && <View style={styles.pyramidGlow} pointerEvents="none" />}
+    </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   tile: {
-    width:        TILE_SIZE,
-    height:       TILE_SIZE,
-    borderWidth:  2,
-    borderRadius: 4,
-    alignItems:   'center',
+    width:          TILE_SIZE,
+    height:         TILE_SIZE,
+    borderWidth:    2,
+    borderRadius:   8,
+    alignItems:     'center',
     justifyContent: 'center',
-    overflow:     'hidden',
+    overflow:       'hidden',
   },
   empty: {
     width:  TILE_SIZE,
     height: TILE_SIZE,
   },
-  selectedTile: {
+  selected: {
     borderWidth: 3,
-    transform: [{ scale: 1.06 }],
-    shadowColor:  COLORS.selected,
-    shadowRadius: 6,
-    shadowOpacity: 0.9,
-    elevation: 8,
+    borderColor: '#FFFFFF',
+    shadowColor:   '#FFFFFF',
+    shadowRadius:  8,
+    shadowOpacity: 0.6,
+    elevation:     8,
+    transform:     [{ scale: 1.08 }],
   },
-  rareTile: {
-    shadowColor:  '#D4A820',
-    shadowRadius: 8,
+  pyramid: {
+    shadowColor:   '#D4A820',
+    shadowRadius:  10,
     shadowOpacity: 0.8,
-    elevation: 10,
+    elevation:     10,
   },
-  shieldOverlay: {
+  shine: {
     ...StyleSheet.absoluteFillObject,
-    alignItems:   'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(136,170,255,0.35)',
+    borderRadius:    8,
+    backgroundColor: 'transparent',
+    borderTopWidth:  1,
+    borderTopColor:  'rgba(255,255,255,0.2)',
   },
-  shieldIcon: {
-    fontSize: 14,
-  },
-  randomOverlay: {
+  pyramidGlow: {
     ...StyleSheet.absoluteFillObject,
-    alignItems:   'center',
-    justifyContent: 'flex-end',
-    paddingBottom: 1,
-    backgroundColor: 'rgba(255,136,255,0.25)',
-  },
-  randomIcon: {
-    fontSize:   11,
-    color:      '#FF88FF',
-    fontWeight: '900',
-  },
-  rareGlow: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 4,
-    borderWidth:  1,
-    borderColor:  '#D4A820',
-    backgroundColor: 'rgba(212,168,32,0.12)',
+    borderRadius:    8,
+    borderWidth:     1,
+    borderColor:     'rgba(212,168,32,0.5)',
+    backgroundColor: 'rgba(212,168,32,0.08)',
   },
 });

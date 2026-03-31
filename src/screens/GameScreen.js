@@ -1,3 +1,18 @@
+/**
+ * GameScreen v2 — Battle layout
+ *
+ * Layout:
+ *  ┌──────────────────────────────────┐
+ *  │ [YOU crab] SCORE  ⏱  SCORE [CPU]│
+ *  │ ████████████░░░ vs ████████░░░░░│
+ *  │                                  │
+ *  │          ┌──────────┐            │
+ *  │          │ 7×8 GRID │            │
+ *  │          └──────────┘            │
+ *  │                                  │
+ *  │     RD ●●○  │  COMBO x3!        │
+ *  └──────────────────────────────────┘
+ */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, SafeAreaView, Animated,
@@ -6,61 +21,50 @@ import PuzzleGrid from '../components/PuzzleGrid';
 import CrabSprite from '../components/CrabSprite';
 import { useGameStore } from '../store/gameStore';
 import {
-  EASY_BLOCKS, HARD_BLOCKS, TOTAL_ROUNDS, ROUND_TIME,
-  OPP_EASY, OPP_HARD, COLORS, ALL_CHARS,
+  TOTAL_ROUNDS, ROUND_TIME, OPP_EASY, OPP_HARD,
+  COLORS, ALL_CHARS,
 } from '../constants/gameConfig';
 
-// ─── Helpers ────────────────────────────────────────────────────
+function randBetween(a, b) { return a + Math.random() * (b - a); }
+function getCharDef(key) { return ALL_CHARS.find(c => c.key === key) ?? ALL_CHARS[0]; }
 
-function randBetween(min, max) {
-  return min + Math.random() * (max - min);
-}
+// Random opponent character (always P3)
+const OPP_CHARS = ['chip', 'wing', 'gentle', 'power', 'pink', 'robot'];
+function randomOppChar() { return OPP_CHARS[Math.floor(Math.random() * OPP_CHARS.length)]; }
 
-function getCharDef(key) {
-  return ALL_CHARS.find(c => c.key === key) ?? ALL_CHARS[0];
-}
+// ─── Score bar ──────────────────────────────────────────────────
 
-// ─── Sub-components ─────────────────────────────────────────────
-
-function ScorePanel({ label, score, charDef, isPlayer }) {
+function ScoreBar({ score, maxScore, color, align }) {
+  const pct = Math.min(score / Math.max(maxScore, 1), 1);
   return (
-    <View style={[styles.scorePanel, isPlayer && styles.scorePanelPlayer]}>
-      <CrabSprite phase={charDef.phase} char={charDef.char} size={36} facingLeft={!isPlayer} />
-      <View style={styles.scoreMeta}>
-        <Text style={styles.scoreLabel}>{label}</Text>
-        <Text style={styles.scoreValue}>{String(score).padStart(6, '0')}</Text>
-      </View>
+    <View style={[styles.barTrack, align === 'right' && { flexDirection: 'row-reverse' }]}>
+      <View style={[styles.barFill, { width: `${pct * 100}%`, backgroundColor: color }]} />
     </View>
   );
 }
 
-function RoundBar({ round, total }) {
-  return (
-    <View style={styles.roundBar}>
-      {Array.from({ length: total }).map((_, i) => (
-        <View
-          key={i}
-          style={[styles.roundDot, i < round && styles.roundDotFilled]}
-        />
-      ))}
-    </View>
-  );
-}
+// ─── Combo toast ────────────────────────────────────────────────
 
 function ComboToast({ combo }) {
   const opacity = useRef(new Animated.Value(0)).current;
+  const scale   = useRef(new Animated.Value(0.5)).current;
+
   useEffect(() => {
-    Animated.sequence([
-      Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }),
-      Animated.delay(600),
-      Animated.timing(opacity, { toValue: 0, duration: 300, useNativeDriver: true }),
-    ]).start();
+    if (combo === 0) return;
+    Animated.parallel([
+      Animated.spring(scale,   { toValue: 1, friction: 4, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, duration: 120, useNativeDriver: true }),
+    ]).start(() => {
+      setTimeout(() => {
+        Animated.timing(opacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
+      }, 600);
+    });
   }, [combo]);
 
   if (combo === 0) return null;
   return (
-    <Animated.View style={[styles.comboToast, { opacity }]}>
-      <Text style={styles.comboText}>COMBO ×{combo + 1}!</Text>
+    <Animated.View style={[styles.combo, { opacity, transform: [{ scale }] }]}>
+      <Text style={styles.comboText}>COMBO ×{combo + 1}</Text>
     </Animated.View>
   );
 }
@@ -69,257 +73,223 @@ function ComboToast({ combo }) {
 
 export default function GameScreen({ navigation }) {
   const { difficulty, selectedChar, recordResult } = useGameStore();
-  const blockDefs = difficulty === 'hard' ? HARD_BLOCKS : EASY_BLOCKS;
+  const isHard = difficulty === 'hard';
 
-  // Static opponent character (always P3 or P2 depending on difficulty)
-  const oppCharDef = difficulty === 'hard'
-    ? { phase: 3, char: 'power', key: 'power' }
-    : { phase: 2, char: null,    key: 'p2'    };
+  const playerChar = getCharDef(selectedChar);
+  const [oppChar]  = useState(() => randomOppChar());
+  const oppCharDef = { phase: 3, char: oppChar };
 
-  const playerCharDef = getCharDef(selectedChar);
+  // State
+  const [round,       setRound]       = useState(1);
+  const [timeLeft,    setTimeLeft]    = useState(ROUND_TIME);
+  const [playerScore, setPlayerScore] = useState(0);
+  const [oppScore,    setOppScore]    = useState(0);
+  const [totalPlayer, setTotalPlayer] = useState(0);
+  const [totalOpp,    setTotalOpp]    = useState(0);
+  const [roundScores, setRoundScores] = useState([]);
+  const [phase,       setPhase]       = useState('playing');
+  const [combo,       setCombo]       = useState(0);
+  const [gridKey,     setGridKey]     = useState(0);
 
-  // ─── Round state ──────────────────────────────────────────────
-  const [round,         setRound]         = useState(1);
-  const [timeLeft,      setTimeLeft]      = useState(ROUND_TIME);
-  const [playerScore,   setPlayerScore]   = useState(0);
-  const [oppScore,      setOppScore]      = useState(0);
-  const [totalPlayer,   setTotalPlayer]   = useState(0);
-  const [totalOpp,      setTotalOpp]      = useState(0);
-  const [roundScores,   setRoundScores]   = useState([]);
-  const [phase,         setPhase]         = useState('playing'); // playing | roundEnd | done
-  const [combo,         setCombo]         = useState(0);
-  const [paused,        setPaused]        = useState(false);
-  const [gridKey,       setGridKey]       = useState(0); // remount grid to reset
+  const timerRef = useRef(null);
+  const oppRef   = useRef(null);
 
-  const timerRef  = useRef(null);
-  const oppRef    = useRef(null);
-  const comboRef  = useRef(0);
+  // Max score for bar sizing (dynamic, tracks the higher scorer)
+  const maxBar = Math.max(playerScore, oppScore, 200);
 
   // ─── Timer ────────────────────────────────────────────────────
   useEffect(() => {
     if (phase !== 'playing') return;
-
     timerRef.current = setInterval(() => {
       setTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(timerRef.current);
-          endRound();
-          return 0;
-        }
+        if (prev <= 1) { clearInterval(timerRef.current); endRound(); return 0; }
         return prev - 1;
       });
     }, 1000);
-
     return () => clearInterval(timerRef.current);
   }, [phase, round]);
 
-  // ─── Opponent scoring ─────────────────────────────────────────
+  // ─── Opponent ─────────────────────────────────────────────────
   useEffect(() => {
     if (phase !== 'playing') return;
-    const cfg = difficulty === 'hard' ? OPP_HARD : OPP_EASY;
-
+    const cfg = isHard ? OPP_HARD : OPP_EASY;
     oppRef.current = setInterval(() => {
-      const pts = Math.floor(randBetween(cfg.min, cfg.max));
-      setOppScore(prev => prev + pts);
+      setOppScore(prev => prev + Math.floor(randBetween(cfg.min, cfg.max)));
     }, 1000);
-
     return () => clearInterval(oppRef.current);
-  }, [phase, round, difficulty]);
+  }, [phase, round, isHard]);
 
-  // ─── End of a round ──────────────────────────────────────────
+  // ─── End round ────────────────────────────────────────────────
   const endRound = useCallback(() => {
     clearInterval(timerRef.current);
     clearInterval(oppRef.current);
-    setPaused(true);
     setPhase('roundEnd');
 
-    setTotalPlayer(prev => prev + playerScore);
-    setTotalOpp(prev    => prev + oppScore);
-    setRoundScores(prev => [...prev, { player: playerScore, opp: oppScore }]);
+    setTotalPlayer(p => p + playerScore);
+    setTotalOpp(p    => p + oppScore);
+    setRoundScores(p => [...p, { player: playerScore, opp: oppScore }]);
 
     setTimeout(() => {
       if (round >= TOTAL_ROUNDS) {
         setPhase('done');
       } else {
-        // Next round
         setRound(r => r + 1);
         setPlayerScore(0);
         setOppScore(0);
         setTimeLeft(ROUND_TIME);
         setGridKey(k => k + 1);
         setPhase('playing');
-        setPaused(false);
       }
-    }, 1800);
+    }, 1500);
   }, [round, playerScore, oppScore]);
 
-  // ─── Game over: navigate to result ───────────────────────────
+  // ─── Game over ────────────────────────────────────────────────
   useEffect(() => {
     if (phase !== 'done') return;
-
-    const finalPlayer = totalPlayer + playerScore;
-    const finalOpp    = totalOpp    + oppScore;
-    const won         = finalPlayer > finalOpp;
-
-    recordResult({
-      won,
-      hard:  difficulty === 'hard',
-      score: finalPlayer,
-    });
-
+    const fp = totalPlayer + playerScore;
+    const fo = totalOpp    + oppScore;
+    const won = fp > fo;
+    recordResult({ won, hard: isHard, score: fp });
     setTimeout(() => {
       navigation.replace('Result', {
-        playerScore: finalPlayer,
-        oppScore:    finalOpp,
-        won,
-        roundScores,
-        difficulty,
-        selectedChar,
+        playerScore: fp, oppScore: fo, won, roundScores,
+        difficulty, selectedChar,
       });
     }, 500);
   }, [phase]);
 
-  // ─── Score callback from grid ─────────────────────────────────
-  const handleScoreAdd = useCallback((pts) => {
-    setPlayerScore(prev => prev + pts);
-  }, []);
+  // ─── Callbacks ────────────────────────────────────────────────
+  const handleScore = useCallback(pts => setPlayerScore(p => p + pts), []);
+  const handleCombo = useCallback(level => { setCombo(level); setTimeout(() => setCombo(0), 1000); }, []);
 
-  const handleCombo = useCallback((level) => {
-    comboRef.current = level;
-    setCombo(level);
-    setTimeout(() => setCombo(0), 1000);
-  }, []);
+  // Timer color
+  const timerColor = timeLeft <= 5 ? COLORS.timerDanger
+                   : timeLeft <= 10 ? COLORS.timerWarn
+                   : COLORS.text;
 
-  // ─── Timer color ─────────────────────────────────────────────
-  const timerColor = timeLeft <= 10 ? COLORS.lose : timeLeft <= 20 ? COLORS.gold : COLORS.text;
-
-  // ─── Render ──────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safe}>
-
-      {/* Top HUD */}
+      {/* ── Battle HUD ──────────────────────────────────────── */}
       <View style={styles.hud}>
-        <ScorePanel
-          label="YOU"
-          score={playerScore}
-          charDef={playerCharDef}
-          isPlayer
-        />
-        <View style={styles.hudCenter}>
-          <Text style={[styles.timer, { color: timerColor }]}>
-            {String(timeLeft).padStart(2, '0')}
-          </Text>
-          <RoundBar round={round} total={TOTAL_ROUNDS} />
-          <Text style={styles.roundLabel}>RD {round}/{TOTAL_ROUNDS}</Text>
+        {/* Player side */}
+        <View style={styles.hudSide}>
+          <CrabSprite phase={playerChar.phase} char={playerChar.char} size={32} />
+          <View style={styles.hudMeta}>
+            <Text style={styles.hudName}>YOU</Text>
+            <Text style={styles.hudScore}>{playerScore.toLocaleString()}</Text>
+          </View>
         </View>
-        <ScorePanel
-          label="CPU"
-          score={oppScore}
-          charDef={oppCharDef}
-        />
+
+        {/* Center timer */}
+        <View style={styles.hudCenter}>
+          <Text style={[styles.timer, { color: timerColor }]}>{timeLeft}</Text>
+          <View style={styles.roundDots}>
+            {Array.from({ length: TOTAL_ROUNDS }).map((_, i) => (
+              <View key={i} style={[styles.dot, i < round && styles.dotActive]} />
+            ))}
+          </View>
+        </View>
+
+        {/* Opponent side */}
+        <View style={[styles.hudSide, { flexDirection: 'row-reverse' }]}>
+          <CrabSprite phase={oppCharDef.phase} char={oppCharDef.char} size={32} facingLeft />
+          <View style={[styles.hudMeta, { alignItems: 'flex-end' }]}>
+            <Text style={styles.hudName}>CPU</Text>
+            <Text style={[styles.hudScore, { color: '#FF8888' }]}>{oppScore.toLocaleString()}</Text>
+          </View>
+        </View>
       </View>
 
-      {/* Combo toast */}
+      {/* ── Score bars ──────────────────────────────────────── */}
+      <View style={styles.barsRow}>
+        <ScoreBar score={playerScore} maxScore={maxBar} color={COLORS.accent} align="left" />
+        <Text style={styles.vs}>VS</Text>
+        <ScoreBar score={oppScore}    maxScore={maxBar} color="#FF6666"       align="right" />
+      </View>
+
+      {/* ── Combo toast ─────────────────────────────────────── */}
       <ComboToast key={combo} combo={combo} />
 
-      {/* Puzzle grid */}
+      {/* ── Grid ────────────────────────────────────────────── */}
       <View style={styles.gridWrap}>
         <PuzzleGrid
           key={gridKey}
-          blockDefs={blockDefs}
-          onScoreAdd={handleScoreAdd}
+          hard={isHard}
+          onScoreAdd={handleScore}
           onCombo={handleCombo}
-          paused={paused || phase !== 'playing'}
+          paused={phase !== 'playing'}
         />
       </View>
 
-      {/* Total score strip */}
-      <View style={styles.totalStrip}>
+      {/* ── Bottom info ─────────────────────────────────────── */}
+      <View style={styles.bottomBar}>
         <Text style={styles.totalLabel}>TOTAL</Text>
         <Text style={[styles.totalVal, { color: COLORS.accent }]}>
-          {String(totalPlayer + playerScore).padStart(7, '0')}
+          {(totalPlayer + playerScore).toLocaleString()}
         </Text>
-        <Text style={styles.totalSep}>vs</Text>
-        <Text style={[styles.totalVal, { color: '#FF6666' }]}>
-          {String(totalOpp + oppScore).padStart(7, '0')}
+        <Text style={styles.totalSep}>:</Text>
+        <Text style={[styles.totalVal, { color: '#FF8888' }]}>
+          {(totalOpp + oppScore).toLocaleString()}
         </Text>
       </View>
-
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex:            1,
-    backgroundColor: COLORS.bg,
-  },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+
+  // HUD
   hud: {
     flexDirection:   'row',
     alignItems:      'center',
     justifyContent:  'space-between',
-    paddingHorizontal: 10,
-    paddingVertical:   8,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    paddingHorizontal: 12,
+    paddingVertical:   6,
   },
-  scorePanel: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    gap:             6,
-    flex:            1,
-  },
-  scorePanelPlayer: {
-    justifyContent: 'flex-start',
-  },
-  scoreMeta: {
-    gap: 2,
-  },
-  scoreLabel: {
-    fontFamily: 'PressStart2P',
-    fontSize:   7,
-    color:      COLORS.textDim,
-  },
-  scoreValue: {
-    fontFamily: 'PressStart2P',
-    fontSize:   11,
-    color:      COLORS.text,
-  },
-  hudCenter: {
-    alignItems: 'center',
-    gap:        4,
-  },
-  timer: {
-    fontFamily: 'PressStart2P',
-    fontSize:   24,
-  },
-  roundBar: {
+  hudSide: {
     flexDirection: 'row',
+    alignItems:    'center',
     gap:           6,
+    flex:          1,
   },
-  roundDot: {
-    width:        10,
-    height:       10,
-    borderRadius: 5,
-    borderWidth:  1,
-    borderColor:  COLORS.border,
-    backgroundColor: 'transparent',
+  hudMeta:  { gap: 1 },
+  hudName:  { fontSize: 10, fontWeight: '800', color: COLORS.textDim, letterSpacing: 1 },
+  hudScore: { fontSize: 16, fontWeight: '900', color: COLORS.text, fontVariant: ['tabular-nums'] },
+  hudCenter: { alignItems: 'center', gap: 2, paddingHorizontal: 8 },
+  timer: { fontSize: 28, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  roundDots: { flexDirection: 'row', gap: 5 },
+  dot:       { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.border },
+  dotActive: { backgroundColor: COLORS.accent },
+
+  // Score bars
+  barsRow: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    paddingHorizontal: 12,
+    gap:               6,
+    marginBottom:      4,
   },
-  roundDotFilled: {
-    backgroundColor: COLORS.accent,
-    borderColor:     COLORS.accent,
-  },
-  roundLabel: {
-    fontFamily: 'PressStart2P',
-    fontSize:   7,
-    color:      COLORS.textDim,
-  },
-  gridWrap: {
+  barTrack: {
     flex:            1,
-    alignItems:      'center',
-    justifyContent:  'center',
+    height:          6,
+    backgroundColor: COLORS.panel,
+    borderRadius:    3,
+    overflow:        'hidden',
+    flexDirection:   'row',
   },
-  totalStrip: {
+  barFill: { height: '100%', borderRadius: 3 },
+  vs: { fontSize: 10, fontWeight: '900', color: COLORS.textDim },
+
+  // Grid
+  gridWrap: {
+    flex:           1,
+    alignItems:     'center',
+    justifyContent: 'center',
+  },
+
+  // Bottom
+  bottomBar: {
     flexDirection:   'row',
     alignItems:      'center',
     justifyContent:  'center',
@@ -328,33 +298,24 @@ const styles = StyleSheet.create({
     borderTopWidth:  1,
     borderTopColor:  COLORS.border,
   },
-  totalLabel: {
-    fontFamily: 'PressStart2P',
-    fontSize:   8,
-    color:      COLORS.textDim,
-  },
-  totalVal: {
-    fontFamily: 'PressStart2P',
-    fontSize:   11,
-  },
-  totalSep: {
-    fontFamily: 'PressStart2P',
-    fontSize:   8,
-    color:      COLORS.textDim,
-  },
-  comboToast: {
-    position:        'absolute',
-    top:             80,
-    alignSelf:       'center',
-    zIndex:          99,
+  totalLabel: { fontSize: 10, fontWeight: '800', color: COLORS.textDim },
+  totalVal:   { fontSize: 14, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  totalSep:   { fontSize: 12, fontWeight: '900', color: COLORS.textDim },
+
+  // Combo
+  combo: {
+    position:     'absolute',
+    top:          90,
+    alignSelf:    'center',
+    zIndex:       99,
     backgroundColor: COLORS.gold,
-    borderRadius:    6,
-    paddingHorizontal: 14,
+    borderRadius: 20,
+    paddingHorizontal: 16,
     paddingVertical:   6,
+    shadowColor:  COLORS.gold,
+    shadowRadius: 12,
+    shadowOpacity: 0.5,
+    elevation:    10,
   },
-  comboText: {
-    fontFamily: 'PressStart2P',
-    fontSize:   13,
-    color:      '#000',
-  },
+  comboText: { fontSize: 14, fontWeight: '900', color: '#000', letterSpacing: 1 },
 });
