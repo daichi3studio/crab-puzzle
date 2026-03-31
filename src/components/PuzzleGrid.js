@@ -39,13 +39,12 @@ const GRID_W = GRID_COLS * CELL - TILE_GAP;
 const GRID_H = GRID_ROWS * CELL - TILE_GAP;
 
 // ─── Animation timing (ms) ───────────────────────────────────────
-const POP_PUNCH_MS    = 55;   // Block punches out to 1.45×
-const POP_FADE_MS     = 90;   // Block collapses + fades to 0
-const DROP_MS         = 190;  // Gravity fall (timing, not spring)
-const SWAP_SNAP_MS    = 120;  // Valid swap snap into place
-const SNAP_BACK_MS    = 160;  // Invalid swap / drag cancel snap-back
-const INVALID_FWD_MS  = 100;  // Invalid swap snap forward
-const INVALID_BACK_MS = 180;  // Invalid swap bounce back
+const POP_PUNCH_MS    = 48;   // Block punches out to 1.45×
+const POP_FADE_MS     = 80;   // Block collapses + fades to 0
+const DROP_MS         = 170;  // Gravity fall (timing, not spring)
+const SNAP_BACK_MS    = 130;  // Invalid swap / drag cancel snap-back
+const INVALID_FWD_MS  = 85;   // Invalid swap snap forward
+const INVALID_BACK_MS = 150;  // Invalid swap bounce back
 
 // ─── Unique block IDs ────────────────────────────────────────────
 let _uid = 1000;
@@ -63,38 +62,66 @@ const rndSpecial = (hard) => {
 };
 const mkBlock = (hard) => ({ id: uid(), type: rndType(), special: rndSpecial(hard) });
 
-function matchIds(idA, idB, bmap) {
-  const a = bmap.get(idA), b = bmap.get(idB);
-  if (!a || !b) return false;
-  if (a.special === 'robot' || b.special === 'robot') return true;
-  return a.type === b.type;
+// ─── Match detection ─────────────────────────────────────────────
+// Robot wildcard rule: Robot extends a run of one TYPE, but cannot
+// bridge two DIFFERENT types into one run.
+//   [A, Robot, A]       → match of 3  ✓ (Robot acts as A)
+//   [A, Robot, B]       → no match    ✓ (Robot would bridge A↔B)
+//   [A,A,A, Robot, B,B,B] → two separate matches: [A,A,A] and [Robot,B,B,B] ✓
+//   [A,A, Robot, A,A]   → match of 5  ✓
+
+function typeOf(id, bmap) {
+  if (!id) return undefined;
+  const b = bmap.get(id);
+  if (!b) return undefined;
+  return b.special === 'robot' ? null : b.type; // null = wildcard
 }
 
 function findMatches(grid, bmap) {
   const hits = new Set();
-  // Horizontal
-  for (let r = 0; r < GRID_ROWS; r++) {
-    let s = 0;
-    for (let c = 1; c <= GRID_COLS; c++) {
-      const ok = c < GRID_COLS && grid[r][c] && grid[r][c - 1] &&
-                 matchIds(grid[r][c], grid[r][c - 1], bmap);
-      if (!ok) {
-        if (c - s >= 3) for (let k = s; k < c; k++) hits.add(`${r},${k}`);
-        s = c;
+
+  function scanLine(ids, keyFn) {
+    let i = 0;
+    while (i < ids.length) {
+      if (!ids[i]) { i++; continue; }
+
+      let dominant = -1; // established type for this run (-1 = unknown)
+      let j = i;
+
+      while (j < ids.length) {
+        const t = typeOf(ids[j], bmap);
+        if (t === undefined) break; // empty cell ends run
+
+        if (t === null) {
+          // Robot: look one step ahead to prevent cross-type bridging
+          const nextT = j + 1 < ids.length ? typeOf(ids[j + 1], bmap) : undefined;
+          if (nextT !== undefined && nextT !== null &&
+              dominant !== -1 && nextT !== dominant) {
+            break; // robot would bridge two different types — end run here
+          }
+          j++;
+        } else if (dominant === -1) {
+          dominant = t; j++;       // first typed block sets the run color
+        } else if (t === dominant) {
+          j++;                     // same color — continue run
+        } else {
+          break;                   // different color, no robot bridge — end run
+        }
       }
+
+      if (j - i >= 3 && dominant !== -1) {
+        for (let k = i; k < j; k++) hits.add(keyFn(k));
+      }
+      i = j > i ? j : i + 1;
     }
   }
-  // Vertical
+
+  for (let r = 0; r < GRID_ROWS; r++) {
+    scanLine(grid[r], c => `${r},${c}`);
+  }
   for (let c = 0; c < GRID_COLS; c++) {
-    let s = 0;
-    for (let r = 1; r <= GRID_ROWS; r++) {
-      const ok = r < GRID_ROWS && grid[r][c] && grid[r - 1][c] &&
-                 matchIds(grid[r][c], grid[r - 1][c], bmap);
-      if (!ok) {
-        if (r - s >= 3) for (let k = s; k < r; k++) hits.add(`${k},${c}`);
-        s = r;
-      }
-    }
+    const col = Array.from({ length: GRID_ROWS }, (_, r) => grid[r][c]);
+    scanLine(col, r => `${r},${c}`);
   }
   return hits;
 }
@@ -425,7 +452,7 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
   const panResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => !locked.current && !paused,
     onMoveShouldSetPanResponder:  (_, gs) =>
-      !locked.current && !paused && (Math.abs(gs.dx) > 4 || Math.abs(gs.dy) > 4),
+      !locked.current && !paused && (Math.abs(gs.dx) > 2 || Math.abs(gs.dy) > 2),
 
     onPanResponderGrant: (evt) => {
       const { locationX, locationY } = evt.nativeEvent;
@@ -442,9 +469,9 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
       const { r, c, id } = drag.current;
       const { dx, dy }   = gs;
 
-      // Lock direction on first significant movement
+      // Lock direction on first significant movement (3px for fast response)
       if (!drag.current.dir) {
-        if (Math.abs(dx) > 6 || Math.abs(dy) > 6)
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3)
           drag.current.dir = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
         else return;
       }
@@ -487,7 +514,7 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
       const { dx, dy } = gs;
       drag.current = null;
 
-      const threshold = CELL * 0.28;
+      const threshold = CELL * 0.20; // 20% of cell ≈ 9px — easier to trigger swap
       let dr = 0, dc = 0;
       if (dir === 'h' && Math.abs(dx) > threshold) dc = dx > 0 ? 1 : -1;
       if (dir === 'v' && Math.abs(dy) > threshold) dr = dy > 0 ? 1 : -1;
