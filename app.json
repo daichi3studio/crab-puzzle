@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Crab Puzzle",
+    "slug": "crab-puzzle",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A1A"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.myopencrab.crabpuzzle"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#0A0A1A"
+      },
+      "package": "com.myopencrab.crabpuzzle"
+    },
+    "web": {
+      "favicon": "./assets/icon.png"
+    }
+  }
+}
