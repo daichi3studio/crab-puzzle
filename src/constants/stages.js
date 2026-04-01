@@ -82,12 +82,13 @@ export const STAGES = [
 // afterStage: the last stage of the zone this VS follows
 // unlocksChar: char key from ALL_CHARS that winning unlocks
 export const VS_BATTLES = [
-  { id: 'vs1', afterStage:  5, unlocksChar: 'p2',     charName: 'Core',   difficulty: 'easy'   },
-  { id: 'vs2', afterStage: 10, unlocksChar: 'chip',   charName: 'Chip',   difficulty: 'easy'   },
-  { id: 'vs3', afterStage: 15, unlocksChar: 'wing',   charName: 'Wing',   difficulty: 'normal' },
-  { id: 'vs4', afterStage: 20, unlocksChar: 'gentle', charName: 'Gentle', difficulty: 'normal' },
-  { id: 'vs5', afterStage: 25, unlocksChar: 'power',  charName: 'Power',  difficulty: 'hard'   },
-  { id: 'vs6', afterStage: 30, unlocksChar: 'pink',   charName: 'Pink',   difficulty: 'hard'   },
+  { id: 'vs1', afterStage:  5, unlocksChar: 'p2',      charName: 'Core',    difficulty: 'easy'   },
+  { id: 'vs2', afterStage: 10, unlocksChar: 'chip',    charName: 'Chip',    difficulty: 'easy'   },
+  { id: 'vs3', afterStage: 15, unlocksChar: 'wing',    charName: 'Wing',    difficulty: 'normal' },
+  { id: 'vs4', afterStage: 20, unlocksChar: 'gentle',  charName: 'Gentle',  difficulty: 'normal' },
+  { id: 'vs5', afterStage: 25, unlocksChar: 'power',   charName: 'Power',   difficulty: 'hard'   },
+  { id: 'vs6', afterStage: 30, unlocksChar: 'pink',    charName: 'Pink',    difficulty: 'hard'   },
+  { id: 'vs7', afterStage: 32, unlocksChar: 'pyramid', charName: 'Pyramid', difficulty: 'hard'   },
 ];
 
 export function getVsBattle(id) {

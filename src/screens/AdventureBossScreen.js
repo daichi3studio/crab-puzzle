@@ -22,7 +22,7 @@ function randBetween(a, b) { return a + Math.random() * (b - a); }
 function getCharDef(key) { return ALL_CHARS.find(c => c.key === key) ?? ALL_CHARS[0]; }
 
 // Fixed CPU characters per VS battle
-const CPU_CHARS = { vs1: 'p2', vs2: 'chip', vs3: 'wing', vs4: 'gentle', vs5: 'power', vs6: 'pink' };
+const CPU_CHARS = { vs1: 'p2', vs2: 'chip', vs3: 'wing', vs4: 'gentle', vs5: 'power', vs6: 'pink', vs7: 'pyramid' };
 
 // ─── Pause modal ─────────────────────────────────────────────────
 function PauseModal({ visible, onResume, onQuit }) {
