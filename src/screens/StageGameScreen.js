@@ -241,7 +241,7 @@ export default function StageGameScreen({ route, navigation }) {
       <PauseModal
         visible={phase === 'paused'}
         onResume={() => setPhase('playing')}
-        onQuit={() => navigation.navigate('StageMap')}
+        onQuit={() => navigation.goBack()}
       />
     </SafeAreaView>
   );

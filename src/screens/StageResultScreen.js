@@ -116,7 +116,7 @@ export default function StageResultScreen({ route, navigation }) {
 
         <TouchableOpacity
           style={styles.tertiaryBtn}
-          onPress={() => navigation.navigate('StageMap')}
+          onPress={() => navigation.goBack()}
         >
           <Text style={styles.tertiaryBtnText}>BACK TO MAP</Text>
         </TouchableOpacity>
