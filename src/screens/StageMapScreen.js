@@ -128,16 +128,13 @@ function VsNode({ vs, status, onPress }) {
       <Animated.View style={[
         styles.vsNode,
         { borderColor: borderCol, backgroundColor: bgColor },
+        isLocked && styles.vsNodeLocked,
         status === 'available' && { transform: [{ scale: pulse }] },
       ]}>
-        {isLocked ? (
-          <Text style={styles.nodeLock}>🔒</Text>
-        ) : (
-          <>
-            <CrabSprite phase={charDef.phase} char={charDef.char} size={32} facingLeft />
-            {isCleared && <Text style={styles.vsCleared}>✓</Text>}
-          </>
-        )}
+        {/* Always show the character — locked ones are just dimmed */}
+        <CrabSprite phase={charDef.phase} char={charDef.char} size={32} facingLeft />
+        {isLocked  && <Text style={styles.vsLockIcon}>🔒</Text>}
+        {isCleared && <Text style={styles.vsCleared}>✓</Text>}
       </Animated.View>
     </TouchableOpacity>
   );
@@ -302,20 +299,19 @@ export default function StageMapScreen({ navigation }) {
                 <View style={[styles.nodeRow, styles[`nodeRow_${pos}`]]}>
                   <View style={styles.vsWrap}>
                     <VsNode vs={vs} status={vsStatus} onPress={() => handlePlayVs(vs)} />
-                    {/* Info bubble */}
-                    {!isCleared && isAvailable && (
-                      <View style={styles.vsInfo}>
-                        <Text style={styles.vsInfoLabel}>VS BATTLE</Text>
-                        <Text style={styles.vsInfoSub}>Win to unlock</Text>
-                        <Text style={[styles.vsInfoChar, { color: COLORS.gold }]}>{vs.charName}</Text>
-                      </View>
-                    )}
-                    {isCleared && (
-                      <View style={styles.vsInfo}>
-                        <Text style={styles.vsInfoLabel}>VS BATTLE</Text>
-                        <Text style={[styles.vsInfoChar, { color: COLORS.gold }]}>{vs.charName} ✓</Text>
-                      </View>
-                    )}
+                    {/* Info bubble — always visible so players know what's coming */}
+                    <View style={styles.vsInfo}>
+                      <Text style={styles.vsInfoLabel}>VS BATTLE</Text>
+                      <Text style={[styles.vsInfoChar, { color: isCleared ? COLORS.gold : COLORS.textMid }]}>
+                        {vs.charName}{isCleared ? ' ✓' : ''}
+                      </Text>
+                      {!isCleared && !isAvailable && (
+                        <Text style={styles.vsInfoSub}>Clear stage {vs.afterStage} first</Text>
+                      )}
+                      {!isCleared && isAvailable && (
+                        <Text style={[styles.vsInfoSub, { color: COLORS.accent }]}>TAP TO CHALLENGE!</Text>
+                      )}
+                    </View>
                   </View>
                   <PathDots color={pathColor} />
                 </View>
@@ -398,7 +394,9 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     shadowRadius: 10, shadowOpacity: 0.5, elevation: 6,
   },
-  vsCleared: { position: 'absolute', top: 2, right: 6, fontSize: 10, color: COLORS.gold, fontWeight: '900' },
+  vsNodeLocked: { opacity: 0.55 },
+  vsLockIcon: { position: 'absolute', bottom: 2, right: 4, fontSize: 10 },
+  vsCleared:  { position: 'absolute', top: 2, right: 6, fontSize: 10, color: COLORS.gold, fontWeight: '900' },
   vsInfo:    { maxWidth: 120 },
   vsInfoLabel: { fontSize: 8,  fontWeight: '900', color: COLORS.gold, letterSpacing: 2 },
   vsInfoSub:   { fontSize: 7,  fontWeight: '600', color: COLORS.textDim, marginTop: 1 },
