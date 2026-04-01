@@ -86,6 +86,8 @@ function StageNode({ cx, cy, stage, status, zoneColor, onPress }) {
       activeOpacity={isLk ? 1 : 0.7}
       style={{ position: 'absolute', left: cx - r, top: cy - r }}
     >
+      {/* Solid base masks the path line behind the node */}
+      <View style={{ position: 'absolute', width: ND, height: ND, borderRadius: r, backgroundColor: COLORS.bg }} />
       <Animated.View style={[
         S.node,
         { backgroundColor: bg, borderColor: bc, borderWidth: isCur ? 3 : 2 },
@@ -135,6 +137,8 @@ function VsNode({ cx, cy, vs, status, onPress }) {
         VS BATTLE
       </Text>
       <TouchableOpacity onPress={isLk ? null : onPress} activeOpacity={isLk ? 1 : 0.8}>
+        {/* Solid base masks the path line behind the VS node */}
+        <View style={{ position: 'absolute', width: VD, height: VD, borderRadius: VD / 2, backgroundColor: COLORS.bg }} />
         <Animated.View style={[
           S.vsNode,
           { backgroundColor: bg, borderColor: bc, borderWidth: isAv || isCl ? 3 : 2 },
