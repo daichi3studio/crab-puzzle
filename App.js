@@ -4,11 +4,14 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useFonts, PressStart2P_400Regular } from '@expo-google-fonts/press-start-2p';
 import { View, ActivityIndicator } from 'react-native';
 
-import TitleScreen      from './src/screens/TitleScreen';
-import CharSelectScreen from './src/screens/CharSelectScreen';
-import GameScreen       from './src/screens/GameScreen';
-import ResultScreen     from './src/screens/ResultScreen';
-import { COLORS }       from './src/constants/gameConfig';
+import TitleScreen       from './src/screens/TitleScreen';
+import CharSelectScreen  from './src/screens/CharSelectScreen';
+import GameScreen        from './src/screens/GameScreen';
+import ResultScreen      from './src/screens/ResultScreen';
+import StageMapScreen    from './src/screens/StageMapScreen';
+import StageGameScreen   from './src/screens/StageGameScreen';
+import StageResultScreen from './src/screens/StageResultScreen';
+import { COLORS }        from './src/constants/gameConfig';
 
 const Stack = createNativeStackNavigator();
 
@@ -29,10 +32,13 @@ export default function App() {
         initialRouteName="Title"
         screenOptions={{ headerShown: false, animation: 'fade' }}
       >
-        <Stack.Screen name="Title"      component={TitleScreen}      />
-        <Stack.Screen name="CharSelect" component={CharSelectScreen} />
-        <Stack.Screen name="Game"       component={GameScreen}       />
-        <Stack.Screen name="Result"     component={ResultScreen}     />
+        <Stack.Screen name="Title"       component={TitleScreen}       />
+        <Stack.Screen name="CharSelect"  component={CharSelectScreen}  />
+        <Stack.Screen name="Game"        component={GameScreen}        />
+        <Stack.Screen name="Result"      component={ResultScreen}      />
+        <Stack.Screen name="StageMap"    component={StageMapScreen}    />
+        <Stack.Screen name="StageGame"   component={StageGameScreen}   />
+        <Stack.Screen name="StageResult" component={StageResultScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

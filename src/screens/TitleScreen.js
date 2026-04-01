@@ -58,13 +58,22 @@ export default function TitleScreen({ navigation }) {
           <Text style={styles.charName}>{charDef.name}</Text>
         </View>
 
-        {/* PLAY button */}
+        {/* ADVENTURE button */}
         <TouchableOpacity
           style={styles.playBtn}
           activeOpacity={0.8}
+          onPress={() => navigation.navigate('StageMap')}
+        >
+          <Text style={styles.playBtnText}>▶  ADVENTURE</Text>
+        </TouchableOpacity>
+
+        {/* VS BATTLE */}
+        <TouchableOpacity
+          style={styles.secondaryBtn}
+          activeOpacity={0.8}
           onPress={() => navigation.navigate('Game')}
         >
-          <Text style={styles.playBtnText}>▶  PLAY</Text>
+          <Text style={styles.secondaryBtnText}>VS BATTLE</Text>
         </TouchableOpacity>
 
         {/* SELECT CRAB */}

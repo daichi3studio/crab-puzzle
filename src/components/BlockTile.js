@@ -10,20 +10,34 @@ import { TILE_SIZE, COLORS, SPECIAL_ROBOT, SPECIAL_PYRAMID } from '../constants/
 export default React.memo(function BlockTile({ block, blockDef, selected }) {
   if (!block || !blockDef) return <View style={styles.empty} />;
 
-  const isRobot   = block.special === 'robot';
-  const isPyramid = block.special === 'pyramid';
-  const isSpecial = isRobot || isPyramid;
+  const isRobot    = block.special === 'robot';
+  const isPyramid  = block.special === 'pyramid';
+  const isObstacle = block.special === 'obstacle';
 
-  const bgColor     = isRobot   ? SPECIAL_ROBOT.color
+  const bgColor     = isObstacle ? '#3A4050'
+                    : isRobot   ? SPECIAL_ROBOT.color
                     : isPyramid ? SPECIAL_PYRAMID.color
                     : blockDef.color;
-  const borderColor = selected  ? '#FFFFFF'
+  const borderColor = isObstacle ? '#5A6070'
+                    : selected  ? '#FFFFFF'
                     : isPyramid ? SPECIAL_PYRAMID.accent
                     : isRobot   ? SPECIAL_ROBOT.accent
                     : blockDef.accent;
 
   const spritePhase = isRobot   ? 3 : isPyramid ? 3 : blockDef.phase;
   const spriteChar  = isRobot   ? 'robot' : isPyramid ? 'pyramid' : blockDef.char;
+
+  if (isObstacle) {
+    return (
+      <View style={[styles.tile, styles.obstacle, { borderColor }]}>
+        <View style={styles.obstacleCross}>
+          <View style={styles.obstacleBar} />
+          <View style={[styles.obstacleBar, styles.obstacleBarV]} />
+        </View>
+        <View style={styles.shine} pointerEvents="none" />
+      </View>
+    );
+  }
 
   return (
     <View style={[
@@ -85,5 +99,29 @@ const styles = StyleSheet.create({
     borderWidth:     1,
     borderColor:     'rgba(212,168,32,0.5)',
     backgroundColor: 'rgba(212,168,32,0.08)',
+  },
+
+  // Obstacle styles
+  obstacle: {
+    backgroundColor: '#3A4050',
+    alignItems:      'center',
+    justifyContent:  'center',
+  },
+  obstacleCross: {
+    width:          TILE_SIZE - 10,
+    height:         TILE_SIZE - 10,
+    alignItems:     'center',
+    justifyContent: 'center',
+  },
+  obstacleBar: {
+    position:        'absolute',
+    width:           TILE_SIZE - 18,
+    height:          4,
+    borderRadius:    2,
+    backgroundColor: '#8090A8',
+  },
+  obstacleBarV: {
+    width:  4,
+    height: TILE_SIZE - 18,
   },
 });

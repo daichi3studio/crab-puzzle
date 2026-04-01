@@ -15,16 +15,19 @@ export const ROUND_TIME   = 30;  // seconds per round
 export const TOTAL_ROUNDS = 3;
 
 // ─── Block types (same for Easy & Hard) ─────────────────────────
-// 5 regular types, always present
+// 6 regular types, always present
 export const BLOCKS = [
-  { id: 0, phase: 1, char: null,   color: '#7888A0', accent: '#556880', name: 'Bit'  },
-  { id: 1, phase: 2, char: null,   color: '#E07830', accent: '#B85818', name: 'Core' },
-  { id: 2, phase: 3, char: 'chip', color: '#3090D0', accent: '#1868A0', name: 'Chip' },
-  { id: 3, phase: 3, char: 'wing', color: '#48B040', accent: '#288818', name: 'Wing' },
-  { id: 4, phase: 3, char: 'pink', color: '#E868A8', accent: '#C04888', name: 'Pink' },
+  { id: 0, phase: 3, char: 'power',  color: '#C82020', accent: '#981010', name: 'Power'  },
+  { id: 1, phase: 2, char: null,     color: '#E07830', accent: '#B85818', name: 'Core'   },
+  { id: 2, phase: 3, char: 'chip',   color: '#3090D0', accent: '#1868A0', name: 'Chip'   },
+  { id: 3, phase: 3, char: 'wing',   color: '#48B040', accent: '#288818', name: 'Wing'   },
+  { id: 4, phase: 3, char: 'pink',   color: '#E868A8', accent: '#C04888', name: 'Pink'   },
+  { id: 5, phase: 3, char: 'gentle', color: '#7040B0', accent: '#502890', name: 'Gentle' },
 ];
 
-// Special blocks (Robot = wild card, Pyramid = ultra rare powerup)
+// Special blocks (created from 4-match / 5-match, activated by tap)
+//   Robot:   4-match → clears one row or column (opposite to match direction)
+//   Pyramid: 5-match → clears cross (row + column)
 export const SPECIAL_ROBOT = {
   id: 'robot', phase: 3, char: 'robot',
   color: '#909098', accent: '#606068', name: 'Robot',
@@ -33,12 +36,6 @@ export const SPECIAL_PYRAMID = {
   id: 'pyramid', phase: 3, char: 'pyramid',
   color: '#5020A0', accent: '#D4A820', name: 'Pyramid',
 };
-
-// Spawn rates for specials (per new block spawned)
-export const ROBOT_RATE_EASY    = 0.04;
-export const ROBOT_RATE_HARD    = 0.07;
-export const PYRAMID_RATE_EASY  = 0;      // never in easy
-export const PYRAMID_RATE_HARD  = 0.015;  // 1.5% in hard
 
 // ─── Scoring ─────────────────────────────────────────────────────
 export const SCORE_MATCH3       = 30;

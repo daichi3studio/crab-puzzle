@@ -1,20 +1,81 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { MAX_LIVES, LIFE_REGEN_MS } from '../constants/stages';
 
-const STORAGE_KEY = '@crab_puzzle_save';
+const STORAGE_KEY = '@crab_puzzle_save_v2';
 
 const DEFAULT_STATE = {
-  totalWins:   0,
-  hardWins:    0,
-  selectedChar: 'p1',   // key from ALL_CHARS
-  difficulty:   'easy', // 'easy' | 'hard'
-  bestScore:    0,
+  // Character & battle
+  selectedChar:  'p1',
+  difficulty:    'easy',
+  totalWins:     0,
+  hardWins:      0,
+  bestScore:     0,
+
+  // Stage progress
+  stageProgress: 1,            // highest unlocked stage ID
+  clearedStages: {},           // { [stageId]: { stars, score } }
+
+  // Lives
+  lives:          MAX_LIVES,
+  livesUpdatedAt: null,        // ISO timestamp — when lives were last modified
 };
+
+// ─── Compute current lives including time-based recovery ─────────
+function computeCurrentLives(storedLives, livesUpdatedAt) {
+  if (storedLives >= MAX_LIVES || !livesUpdatedAt) return storedLives;
+  const elapsed = Date.now() - new Date(livesUpdatedAt).getTime();
+  const recovered = Math.floor(elapsed / LIFE_REGEN_MS);
+  return Math.min(MAX_LIVES, storedLives + recovered);
+}
+
+// ─── Time until next life recovery (ms) ─────────────────────────
+export function msUntilNextLife(storedLives, livesUpdatedAt) {
+  if (storedLives >= MAX_LIVES || !livesUpdatedAt) return 0;
+  const elapsed = Date.now() - new Date(livesUpdatedAt).getTime();
+  const nextAt = LIFE_REGEN_MS - (elapsed % LIFE_REGEN_MS);
+  return nextAt;
+}
 
 export const useGameStore = create((set, get) => ({
   ...DEFAULT_STATE,
 
-  // ─── Actions ────────────────────────────────────────────────────
+  // ─── Lives ──────────────────────────────────────────────────────
+
+  getLives: () => {
+    const { lives, livesUpdatedAt } = get();
+    return computeCurrentLives(lives, livesUpdatedAt);
+  },
+
+  spendLife: () => {
+    const { lives, livesUpdatedAt } = get();
+    const current = computeCurrentLives(lives, livesUpdatedAt);
+    if (current <= 0) return false;
+    const newLives = current - 1;
+    const now = new Date().toISOString();
+    set({ lives: newLives, livesUpdatedAt: now });
+    get()._save();
+    return true;
+  },
+
+  // ─── Stage progress ─────────────────────────────────────────────
+
+  clearStage: ({ stageId, score, stars }) => {
+    const { clearedStages, stageProgress } = get();
+    const prev = clearedStages[stageId] ?? { stars: 0, score: 0 };
+    const updated = {
+      ...clearedStages,
+      [stageId]: {
+        stars: Math.max(prev.stars, stars),
+        score: Math.max(prev.score, score),
+      },
+    };
+    const newProgress = Math.max(stageProgress, stageId + 1);
+    set({ clearedStages: updated, stageProgress: newProgress });
+    get()._save();
+  },
+
+  // ─── Battle / character ─────────────────────────────────────────
 
   setDifficulty: (difficulty) => {
     set({ difficulty });
@@ -38,12 +99,19 @@ export const useGameStore = create((set, get) => ({
   // ─── Persistence ────────────────────────────────────────────────
 
   _save: async () => {
-    const { totalWins, hardWins, selectedChar, difficulty, bestScore } = get();
+    const s = get();
     try {
-      await AsyncStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ totalWins, hardWins, selectedChar, difficulty, bestScore })
-      );
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({
+        selectedChar:  s.selectedChar,
+        difficulty:    s.difficulty,
+        totalWins:     s.totalWins,
+        hardWins:      s.hardWins,
+        bestScore:     s.bestScore,
+        stageProgress: s.stageProgress,
+        clearedStages: s.clearedStages,
+        lives:         s.lives,
+        livesUpdatedAt: s.livesUpdatedAt,
+      }));
     } catch (_) {}
   },
 
@@ -52,7 +120,14 @@ export const useGameStore = create((set, get) => ({
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
       if (raw) {
         const data = JSON.parse(raw);
-        set({ ...DEFAULT_STATE, ...data });
+        // Compute recovered lives on hydrate
+        const lives = computeCurrentLives(
+          data.lives ?? MAX_LIVES,
+          data.livesUpdatedAt ?? null,
+        );
+        // If lives recovered fully, reset livesUpdatedAt
+        const livesUpdatedAt = lives >= MAX_LIVES ? null : data.livesUpdatedAt;
+        set({ ...DEFAULT_STATE, ...data, lives, livesUpdatedAt });
       }
     } catch (_) {}
   },
