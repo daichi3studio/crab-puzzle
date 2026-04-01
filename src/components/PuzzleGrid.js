@@ -214,8 +214,9 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
   const gridRef  = useRef(null);   // grid[r][c] = blockId | null
   const bmapRef  = useRef(null);   // Map<id, {type, special}>
   const animsRef = useRef(new Map()); // Map<id, {x, y, scale, opacity}>
-  const locked   = useRef(false);
-  const drag     = useRef(null);   // {r, c, id, dir, nid, nr, nc}
+  const locked      = useRef(false);
+  const drag        = useRef(null);    // {r, c, id, dir, nid, nr, nc}
+  const pendingSwap = useRef(null);    // {id1, id2} — queued during cascade
 
   // Single piece of React state — only drives mount/unmount of block nodes
   const [liveIds, setLiveIds] = useState(() => {
@@ -304,13 +305,21 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
     return { drops, newIds };
   }
 
-  // ─── Core cascade processor (v6: pre-compute → single React update → animate)
+  // ─── Core cascade processor (v6.1)
+  //
+  // v6 had a critical bug: matched blocks were removed from liveIds BEFORE
+  // the pop animation → blocks were unmounted → pop was invisible.
+  //
+  // v6.1 fix:
+  //  Phase 1: Pre-compute chain + PRE-INIT new block positions (no flash)
+  //  Phase 2: ONE setLiveIds to ADD new blocks (matched blocks stay in DOM)
+  //  Phase 3: Animate — pop (blocks in DOM ✓) → remove matched → drop
+  //  Phase 4: Final cleanup + execute any pending swap queued during cascade
   const processMatches = useCallback(async (initialMatches) => {
     const grid = gridRef.current;
     const bmap = bmapRef.current;
 
     // ── Phase 1: Pre-compute entire cascade chain synchronously ──────────
-    // This runs in microseconds. gridRef/bmapRef reach their final state here.
     const steps = [];
     let curMatches = initialMatches;
     let cascade    = 0;
@@ -327,34 +336,10 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
       });
       pts += scoreFor(curMatches.size, cascade);
 
-      // Mutates grid + bmap → next findMatches sees the updated state
       const { drops, newIds } = applyGravity(matchedIds);
 
-      steps.push({ matchedIds, drops, newIds, pts, cascade });
-      curMatches = findMatches(grid, bmap);
-      cascade++;
-    }
-
-    if (steps.length === 0) { locked.current = false; return; }
-
-    // ── Phase 2: Single React update — remove matched, add ALL new ───────
-    // Only ONE setLiveIds call for the entire cascade chain.
-    const allMatchedIds = new Set(steps.flatMap(s => [...s.matchedIds]));
-    const allNewIds     = steps.flatMap(s => s.newIds);
-
-    setLiveIds(prev => {
-      const next = new Set(prev);
-      allMatchedIds.forEach(id => next.delete(id));
-      allNewIds.forEach(id => next.add(id));
-      return next;
-    });
-
-    // Single double-rAF: wait for React to mount all new block nodes
-    await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
-
-    // Position ALL new blocks from ALL cascade levels above the grid.
-    // overflow:hidden clips them until their animation starts.
-    steps.forEach(({ drops }) => {
+      // Pre-init new block Animated.Values ABOVE the grid before they mount.
+      // This prevents the 1-frame flash at their final positions.
       drops.forEach(({ id, toC, isNew }) => {
         if (isNew) {
           const a = getAnim(id, toC * CELL, -CELL * 2);
@@ -364,15 +349,35 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
           a.opacity.setValue(1);
         }
       });
-    });
 
-    // ── Phase 3: Animate each cascade level sequentially ─────────────────
+      steps.push({ matchedIds, drops, newIds, pts, cascade });
+      curMatches = findMatches(grid, bmap);
+      cascade++;
+    }
+
+    if (steps.length === 0) { locked.current = false; return; }
+
+    const allMatchedIds = new Set(steps.flatMap(s => [...s.matchedIds]));
+    const allNewIds     = steps.flatMap(s => s.newIds);
+
+    // ── Phase 2: Add ALL new blocks (do NOT remove matched yet) ──────────
+    // Matched blocks stay in liveIds so they're in the DOM for pop animation.
+    if (allNewIds.length > 0) {
+      setLiveIds(prev => {
+        const next = new Set(prev);
+        allNewIds.forEach(id => next.add(id));
+        return next;
+      });
+      // Wait for new blocks to mount (already pre-positioned above grid)
+      await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+    }
+
+    // ── Phase 3: Animate each cascade level ──────────────────────────────
     for (const { matchedIds, drops, pts, cascade } of steps) {
-      // Report score + combo immediately (UI updates don't wait for animation)
       onScoreAddRef.current(pts);
       if (cascade > 0) onComboRef.current(cascade);
 
-      // Pop: punch up (55ms) → collapse + fade (90ms)
+      // Pop: matched blocks STILL IN DOM → animation is visible ✓
       await new Promise(res =>
         Animated.parallel([...matchedIds].map(id => {
           const a = getAnim(id);
@@ -388,17 +393,41 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
         })).start(res)
       );
 
-      // Gravity: all blocks in this level drop simultaneously (190ms easing)
-      // New blocks from later cascade levels are above the grid (invisible) — safe to ignore
+      // Remove this step's matched blocks after pop (non-blocking, fire-and-forget)
+      setLiveIds(prev => {
+        const next = new Set(prev);
+        matchedIds.forEach(id => next.delete(id));
+        return next;
+      });
+
+      // Drop all blocks (timing animation, deterministic)
       await new Promise(res =>
         Animated.parallel(drops.map(({ id, toR, toC }) => dropTiming(id, toR, toC)))
           .start(res)
       );
     }
 
-    // ── Phase 4: Cleanup ──────────────────────────────────────────────────
+    // ── Phase 4: Cleanup + execute any swap queued during cascade ─────────
     allMatchedIds.forEach(id => animsRef.current.delete(id));
+
+    const pending = pendingSwap.current;
+    pendingSwap.current = null;
     locked.current = false;
+
+    if (pending) {
+      // Find current positions of queued blocks (they may have moved due to gravity)
+      let r1 = -1, c1 = -1, r2 = -1, c2 = -1;
+      for (let r = 0; r < GRID_ROWS; r++)
+        for (let c = 0; c < GRID_COLS; c++) {
+          if (grid[r][c] === pending.id1) { r1 = r; c1 = c; }
+          if (grid[r][c] === pending.id2) { r2 = r; c2 = c; }
+        }
+      // Only execute if both blocks still exist AND are still adjacent
+      if (r1 >= 0 && r2 >= 0 && Math.abs(r1 - r2) + Math.abs(c1 - c2) === 1) {
+        locked.current = true;
+        doSwap(r1, c1, r2, c2);
+      }
+    }
   }, []); // Empty deps — all mutable state accessed via refs
 
   // ─── Swap handler ────────────────────────────────────────────
@@ -450,9 +479,10 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
 
   // ─── PanResponder ─────────────────────────────────────────────
   const panResponder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => !locked.current && !paused,
+    // Allow touch even during cascade — gesture is tracked and queued
+    onStartShouldSetPanResponder: () => !paused,
     onMoveShouldSetPanResponder:  (_, gs) =>
-      !locked.current && !paused && (Math.abs(gs.dx) > 2 || Math.abs(gs.dy) > 2),
+      !paused && (Math.abs(gs.dx) > 2 || Math.abs(gs.dy) > 2),
 
     onPanResponderGrant: (evt) => {
       const { locationX, locationY } = evt.nativeEvent;
@@ -465,17 +495,21 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
     },
 
     onPanResponderMove: (_, gs) => {
-      if (!drag.current || locked.current || paused) return;
-      const { r, c, id } = drag.current;
-      const { dx, dy }   = gs;
+      if (!drag.current || paused) return;
+      const { dx, dy } = gs;
 
-      // Lock direction on first significant movement (3px for fast response)
+      // Track direction regardless of lock state
       if (!drag.current.dir) {
         if (Math.abs(dx) > 3 || Math.abs(dy) > 3)
           drag.current.dir = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
         else return;
       }
 
+      // During cascade: only track direction, don't move blocks visually
+      // (prevents fighting cascade drop animations)
+      if (locked.current) return;
+
+      const { r, c, id } = drag.current;
       const max = CELL;
       let cdx = 0, cdy = 0, nr = r, nc = c;
 
@@ -487,16 +521,13 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
         nr  = r + (cdy > 0 ? 1 : -1);
       }
 
-      // Dragged block follows finger directly (zero latency via setValue)
       const a = getAnim(id);
       a.x.setValue(c * CELL + cdx);
       a.y.setValue(r * CELL + cdy);
 
-      // Neighbor pushed in opposite direction proportionally
       if (nr >= 0 && nr < GRID_ROWS && nc >= 0 && nc < GRID_COLS) {
         const nid = gridRef.current[nr][nc];
         if (nid) {
-          // Store neighbor coords so we can snap back cleanly without __getValue()
           if (nid !== drag.current.nid) {
             drag.current.nid = nid;
             drag.current.nr  = nr;
@@ -514,17 +545,37 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
       const { dx, dy } = gs;
       drag.current = null;
 
-      const threshold = CELL * 0.20; // 20% of cell ≈ 9px — easier to trigger swap
+      const threshold = CELL * 0.20;
       let dr = 0, dc = 0;
       if (dir === 'h' && Math.abs(dx) > threshold) dc = dx > 0 ? 1 : -1;
       if (dir === 'v' && Math.abs(dy) > threshold) dr = dy > 0 ? 1 : -1;
 
       const tr = r + dr, tc = c + dc;
-      if ((dr || dc) && tr >= 0 && tr < GRID_ROWS && tc >= 0 && tc < GRID_COLS) {
+      const isValidTarget =
+        (dr || dc) && tr >= 0 && tr < GRID_ROWS && tc >= 0 && tc < GRID_COLS;
+
+      if (locked.current) {
+        // ── Cascade running: queue the swap ─────────────────────────────
+        if (isValidTarget) {
+          const id2 = gridRef.current[tr][tc];
+          if (id2 && id2 !== id) {
+            pendingSwap.current = { id1: id, id2 };
+            // Scale pulse on the source block = visual confirmation of queue
+            Animated.sequence([
+              Animated.timing(getAnim(id).scale, { toValue: 1.18, duration: 70, useNativeDriver: true }),
+              Animated.timing(getAnim(id).scale, { toValue: 1.00, duration: 70, useNativeDriver: true }),
+            ]).start();
+          }
+        }
+        // Block didn't visually move (we skipped setValue), nothing to snap
+        return;
+      }
+
+      // ── Normal: execute immediately ──────────────────────────────────
+      if (isValidTarget) {
         locked.current = true;
         doSwap(r, c, tr, tc);
       } else {
-        // Below threshold or edge — snap back
         const snaps = [snapSpring(id, r, c, 8, 200)];
         if (nid && nRow != null) snaps.push(snapSpring(nid, nRow, nCol, 8, 200));
         Animated.parallel(snaps).start();
@@ -535,6 +586,7 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
       if (!drag.current) return;
       const { r, c, id, nid, nr: nRow, nc: nCol } = drag.current;
       drag.current = null;
+      if (locked.current) return; // block didn't move visually, nothing to restore
       const snaps = [snapSpring(id, r, c, 6, 160)];
       if (nid && nRow != null) snaps.push(snapSpring(nid, nRow, nCol, 6, 160));
       Animated.parallel(snaps).start();
