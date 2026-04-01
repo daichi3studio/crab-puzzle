@@ -393,21 +393,26 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
         })).start(res)
       );
 
-      // Remove this step's matched blocks after pop (non-blocking, fire-and-forget)
-      setLiveIds(prev => {
-        const next = new Set(prev);
-        matchedIds.forEach(id => next.delete(id));
-        return next;
-      });
-
       // Drop all blocks (timing animation, deterministic)
+      // NOTE: matched blocks stay in liveIds during drop — invisible (scale=0,
+      // opacity=0 after pop) but removing them mid-animation would trigger a
+      // React re-render on the JS thread causing stutter. Batch removal to end.
       await new Promise(res =>
         Animated.parallel(drops.map(({ id, toR, toC }) => dropTiming(id, toR, toC)))
           .start(res)
       );
     }
 
-    // ── Phase 4: Cleanup + execute any swap queued during cascade ─────────
+    // ── Phase 4: ONE setLiveIds to remove ALL matched blocks after animation ──
+    // All animations complete → single React re-render to clean up invisible blocks.
+    // This is zero re-renders during animation (was N re-renders in previous version).
+    setLiveIds(prev => {
+      const next = new Set(prev);
+      allMatchedIds.forEach(id => next.delete(id));
+      return next;
+    });
+
+    // ── Phase 5: Cleanup + execute any swap queued during cascade ─────────
     allMatchedIds.forEach(id => animsRef.current.delete(id));
 
     const pending = pendingSwap.current;
