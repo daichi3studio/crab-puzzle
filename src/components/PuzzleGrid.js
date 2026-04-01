@@ -170,6 +170,33 @@ function planSpecials(groups) {
   return specials;
 }
 
+// Find a hint swap: the first adjacent swap that would create a match
+function findHintSwap(grid, bmap) {
+  for (let r = 0; r < GRID_ROWS; r++) {
+    for (let c = 0; c < GRID_COLS - 1; c++) {
+      const id1 = grid[r][c]; const id2 = grid[r][c + 1];
+      if (!id1 || !id2) continue;
+      if (bmap.get(id1)?.special || bmap.get(id2)?.special) continue;
+      grid[r][c] = id2; grid[r][c + 1] = id1;
+      const ok = findMatchGroups(grid, bmap).length > 0;
+      grid[r][c] = id1; grid[r][c + 1] = id2;
+      if (ok) return { r1: r, c1: c, r2: r, c2: c + 1 };
+    }
+  }
+  for (let r = 0; r < GRID_ROWS - 1; r++) {
+    for (let c = 0; c < GRID_COLS; c++) {
+      const id1 = grid[r][c]; const id2 = grid[r + 1][c];
+      if (!id1 || !id2) continue;
+      if (bmap.get(id1)?.special || bmap.get(id2)?.special) continue;
+      grid[r][c] = id2; grid[r + 1][c] = id1;
+      const ok = findMatchGroups(grid, bmap).length > 0;
+      grid[r][c] = id1; grid[r + 1][c] = id2;
+      if (ok) return { r1: r, c1: c, r2: r + 1, c2: c };
+    }
+  }
+  return null;
+}
+
 // Collect all matched block IDs from groups
 function collectMatchedIds(groups, grid) {
   const ids = new Set();
@@ -228,6 +255,40 @@ const PuzzleGrid = React.memo(function PuzzleGrid({ hard, onScoreAdd, onCombo, p
   // Beam effect state
   const beamOpacity  = useRef(new Animated.Value(0)).current;
   const [beamEffect, setBeamEffect] = useState(null);
+
+  // Hint system
+  const [hintPair, setHintPair] = useState(null);
+  const hintAnim        = useRef(new Animated.Value(0)).current;
+  const hintAnimLoopRef = useRef(null);
+  const idleTimerRef    = useRef(null);
+
+  const clearHint = useCallback(() => {
+    if (idleTimerRef.current)    { clearTimeout(idleTimerRef.current); idleTimerRef.current = null; }
+    if (hintAnimLoopRef.current) { hintAnimLoopRef.current.stop();     hintAnimLoopRef.current = null; }
+    hintAnim.setValue(0);
+    setHintPair(null);
+  }, [hintAnim]);
+
+  const startHint = useCallback(() => {
+    if (locked.current || paused) return;
+    const pair = findHintSwap(gridRef.current, bmapRef.current);
+    if (!pair) return;
+    setHintPair(pair);
+    hintAnim.setValue(0);
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(hintAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
+      Animated.timing(hintAnim, { toValue: 0, duration: 500, useNativeDriver: true }),
+    ]));
+    hintAnimLoopRef.current = loop;
+    loop.start();
+  }, [hintAnim, paused]);
+
+  const resetHintTimer = useCallback(() => {
+    clearHint();
+    if (!paused) idleTimerRef.current = setTimeout(startHint, 3000);
+  }, [clearHint, startHint, paused]);
+  const resetHintTimerRef = useRef(resetHintTimer);
+  resetHintTimerRef.current = resetHintTimer;
   // beamEffect = { r, c, dir: 'h'|'v'|'cross', color }
 
   const [liveIds, setLiveIds] = useState(() => {
@@ -261,11 +322,16 @@ const PuzzleGrid = React.memo(function PuzzleGrid({ hard, onScoreAdd, onCombo, p
   // Obstacle spawn timer — ticks every second, spawns with probability obstacleRate
   const obstacleRateRef = useRef(obstacleRate);
   obstacleRateRef.current = obstacleRate;
+  const MAX_OBSTACLES = 30;
   const spawnObstacle = useCallback(() => {
     if (obstacleRateRef.current <= 0 || locked.current) return;
     if (Math.random() > obstacleRateRef.current) return;
     const grid = gridRef.current;
     const bmap = bmapRef.current;
+    // Enforce max 30 obstacles on board
+    let obstacleCount = 0;
+    for (const b of bmap.values()) { if (b.special === 'obstacle') obstacleCount++; }
+    if (obstacleCount >= MAX_OBSTACLES) return;
     // Pick a random top-row cell that has a regular block
     const candidates = [];
     for (let c = 0; c < GRID_COLS; c++) {
@@ -519,6 +585,7 @@ const PuzzleGrid = React.memo(function PuzzleGrid({ hard, onScoreAdd, onCombo, p
     const pending = pendingSwap.current;
     pendingSwap.current = null;
     locked.current = false;
+    if (!pending) resetHintTimerRef.current();
 
     if (pending) {
       let r1 = -1, c1 = -1, r2 = -1, c2 = -1;
@@ -541,44 +608,82 @@ const PuzzleGrid = React.memo(function PuzzleGrid({ hard, onScoreAdd, onCombo, p
     const id = grid[r][c];
     const block = bmap.get(id);
     if (!block?.special) return;
+    if (block.special === 'obstacle') return; // obstacles are NOT tappable
 
     locked.current = true;
-    const dir = block.special === 'pyramid' ? 'cross' : block.dir;
 
-    // Collect blocks to clear
-    const matchedIds = new Set();
-    matchedIds.add(id);
-    if (dir === 'h' || dir === 'cross') {
-      for (let cc = 0; cc < GRID_COLS; cc++)
-        if (grid[r][cc]) matchedIds.add(grid[r][cc]);
+    // ── BFS chain: collect all cells including chained specials ──
+    // Queue: { r, c } of specials to fire
+    const matchedIds  = new Set();
+    const firedSpecials = new Set(); // track which specials already fired
+    const beamQueue   = [{ r, c }];
+
+    while (beamQueue.length > 0) {
+      const { r: br, c: bc } = beamQueue.shift();
+      const bid   = grid[br][bc];
+      if (!bid) continue;
+      const blk = bmap.get(bid);
+      if (!blk?.special) continue;
+      if (firedSpecials.has(bid)) continue;
+      firedSpecials.add(bid);
+      matchedIds.add(bid);
+
+      const dir = blk.special === 'pyramid' ? 'cross' : blk.dir;
+      if (dir === 'h' || dir === 'cross') {
+        for (let cc = 0; cc < GRID_COLS; cc++) {
+          const tid = grid[br][cc];
+          if (tid) {
+            matchedIds.add(tid);
+            const tb = bmap.get(tid);
+            if (tb?.special && tb.special !== 'obstacle' && !firedSpecials.has(tid)) {
+              beamQueue.push({ r: br, c: cc });
+            }
+          }
+        }
+      }
+      if (dir === 'v' || dir === 'cross') {
+        for (let rr = 0; rr < GRID_ROWS; rr++) {
+          const tid = grid[rr][bc];
+          if (tid) {
+            matchedIds.add(tid);
+            const tb = bmap.get(tid);
+            if (tb?.special && tb.special !== 'obstacle' && !firedSpecials.has(tid)) {
+              beamQueue.push({ r: rr, c: bc });
+            }
+          }
+        }
+      }
     }
-    if (dir === 'v' || dir === 'cross') {
+
+    // ── Beam effects: fire sequentially for each chained special ─
+    for (const { r: br, c: bc } of [...firedSpecials].map(fid => {
+      // Reverse-lookup row/col for this special id
       for (let rr = 0; rr < GRID_ROWS; rr++)
-        if (grid[rr][c]) matchedIds.add(grid[rr][c]);
+        for (let cc = 0; cc < GRID_COLS; cc++)
+          if (grid[rr][cc] === fid) return { r: rr, c: cc };
+      return null;
+    }).filter(Boolean)) {
+      const fid = grid[br][bc];
+      const fblk = bmap.get(fid);
+      const fdir = fblk?.special === 'pyramid' ? 'cross' : fblk?.dir;
+      const beamColor = fblk?.special === 'pyramid' ? '#E8B830' : '#00EEFF';
+      setBeamEffect({ r: br, c: bc, dir: fdir, color: beamColor });
+      const fa = getAnim(fid);
+      await new Promise(res =>
+        Animated.parallel([
+          Animated.timing(fa.y,     { toValue: br * CELL - 12, duration: 80,  useNativeDriver: true }),
+          Animated.timing(fa.scale, { toValue: 1.35,           duration: 80,  useNativeDriver: true }),
+          Animated.sequence([
+            Animated.timing(beamOpacity, { toValue: 0.85, duration: 50,  useNativeDriver: true }),
+            Animated.delay(60),
+            Animated.timing(beamOpacity, { toValue: 0,    duration: 80,  useNativeDriver: true }),
+          ]),
+        ]).start(res)
+      );
+      setBeamEffect(null);
     }
 
-    // ── Beam effect: float up + beam flash ──────────────────────
-    const beamColor = block.special === 'pyramid' ? '#E8B830' : '#00EEFF';
-    setBeamEffect({ r, c, dir, color: beamColor });
-
-    const a = getAnim(id);
-    await new Promise(res =>
-      Animated.parallel([
-        // Special floats up and scales
-        Animated.timing(a.y,     { toValue: r * CELL - 12, duration: 100, useNativeDriver: true }),
-        Animated.timing(a.scale, { toValue: 1.35,          duration: 100, useNativeDriver: true }),
-        // Beam flashes in
-        Animated.sequence([
-          Animated.timing(beamOpacity, { toValue: 0.85, duration: 60,  useNativeDriver: true }),
-          Animated.delay(80),
-          Animated.timing(beamOpacity, { toValue: 0,    duration: 100, useNativeDriver: true }),
-        ]),
-      ]).start(res)
-    );
-
-    setBeamEffect(null);
-
-    // Now run cascade
+    // Now run cascade with all collected ids
     runCascade(matchedIds, []);
   }, [runCascade, beamOpacity]);
 
@@ -634,6 +739,7 @@ const PuzzleGrid = React.memo(function PuzzleGrid({ hard, onScoreAdd, onCombo, p
       !paused && (Math.abs(gs.dx) > 2 || Math.abs(gs.dy) > 2),
 
     onPanResponderGrant: (evt) => {
+      resetHintTimerRef.current();
       const { locationX, locationY } = evt.nativeEvent;
       const c = Math.floor(locationX / CELL);
       const r = Math.floor(locationY / CELL);
@@ -746,6 +852,11 @@ const PuzzleGrid = React.memo(function PuzzleGrid({ hard, onScoreAdd, onCombo, p
     },
   }), [paused, doSwap, activateSpecial]);
 
+  // ─── Hint: clear on pause, start timer on mount ───────────────
+  useEffect(() => {
+    if (paused) { clearHint(); } else { resetHintTimerRef.current(); }
+  }, [paused, clearHint]);
+
   // ─── Obstacle spawn timer ─────────────────────────────────────
   useEffect(() => {
     if (obstacleRate <= 0 || paused) return;
@@ -796,6 +907,29 @@ const PuzzleGrid = React.memo(function PuzzleGrid({ hard, onScoreAdd, onCombo, p
             />
           );
         })}
+
+        {/* ── Hint overlay ─────────────────────────────────── */}
+        {hintPair && [
+          { r: hintPair.r1, c: hintPair.c1 },
+          { r: hintPair.r2, c: hintPair.c2 },
+        ].map((pos, i) => (
+          <Animated.View
+            key={`hint-${i}`}
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: pos.c * CELL,
+              top:  pos.r * CELL,
+              width: TILE_SIZE,
+              height: TILE_SIZE,
+              borderRadius: 8,
+              borderWidth: 2,
+              borderColor: '#FFE040',
+              zIndex: 30,
+              opacity: hintAnim,
+            }}
+          />
+        ))}
 
         {/* ── Beam effect overlay ────────────────────────────── */}
         {beamEffect && (beamEffect.dir === 'h' || beamEffect.dir === 'cross') && (

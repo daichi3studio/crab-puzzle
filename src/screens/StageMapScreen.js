@@ -2,16 +2,17 @@
  * StageMapScreen — Winding road map
  * Stage 1 at bottom, stage 40 at top. Scroll UP to progress.
  */
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import {
   View, Text, SafeAreaView, ScrollView,
   TouchableOpacity, Animated, StatusBar, useWindowDimensions,
-  StyleSheet,
+  StyleSheet, Modal,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import CrabSprite from '../components/CrabSprite';
 import { useGameStore, msUntilNextLife } from '../store/gameStore';
 import { COLORS, ALL_CHARS } from '../constants/gameConfig';
-import { STAGES, ZONES, MAX_LIVES, getZone, getVsAfterStage } from '../constants/stages';
+import { STAGES, ZONES, VS_BATTLES, MAX_LIVES, getZone, getVsAfterStage } from '../constants/stages';
 
 const gcd = k => ALL_CHARS.find(c => c.key === k) ?? ALL_CHARS[0];
 
@@ -62,9 +63,10 @@ const PathSeg = React.memo(({ x1, y1, x2, y2, color }) => {
 });
 
 // ── Stage node (absolute positioned on canvas) ────────────────────
-function StageNode({ cx, cy, stage, status, zoneColor, onPress }) {
+function StageNode({ cx, cy, stage, status, zoneColor, onPress, charKey }) {
   const pulse = useRef(new Animated.Value(1)).current;
   const isCur = status === 'current';
+  const charDef = isCur ? gcd(charKey) : null;
   useEffect(() => {
     if (!isCur) return;
     const lp = Animated.loop(Animated.sequence([
@@ -97,10 +99,12 @@ function StageNode({ cx, cy, stage, status, zoneColor, onPress }) {
       ]}>
         {isLk
           ? <Text style={S.nodeLk}>🔒</Text>
-          : <>
-              <Text style={S.nodeN}>{stage.id}</Text>
-              {isCl && <Text style={S.nodeCk}>✓</Text>}
-            </>
+          : isCur && charDef
+            ? <CrabSprite phase={charDef.phase} char={charDef.char} size={34} />
+            : <>
+                <Text style={S.nodeN}>{stage.id}</Text>
+                {isCl && <Text style={S.nodeCk}>✓</Text>}
+              </>
         }
       </Animated.View>
     </TouchableOpacity>
@@ -175,11 +179,14 @@ function ZoneBanner({ canvasCy, zone }) {
 export default function StageMapScreen({ navigation }) {
   const { width: SW, height: SH } = useWindowDimensions();
   const store = useGameStore();
-  const { hydrate, getLives, stageProgress, clearedStages, clearedVsBattles } = store;
-  useEffect(() => { hydrate(); }, []);
+  const { hydrate, getLives, stageProgress, clearedStages, clearedVsBattles, selectedChar } = store;
+
+  // Re-hydrate every time this screen comes into focus (fixes post-background selection bug)
+  useFocusEffect(useCallback(() => { hydrate(); }, []));
 
   const lives  = getLives();
   const msNext = msUntilNextLife(store.lives, store.livesUpdatedAt);
+  const [menuVisible, setMenuVisible] = useState(false);
   const scrollRef = useRef(null);
 
   // Build flat items list: idx 0 = bottom (stage 1), last idx = top (stage 40)
@@ -204,6 +211,19 @@ export default function StageMapScreen({ navigation }) {
       return { cx, cy };
     });
   }, [items, SW, canvasH]);
+
+  // Zone background stripes (faint color band per zone)
+  const zoneStripes = useMemo(() => {
+    return ZONES.map(zone => {
+      const stageIdxs = items
+        .map((it, i) => (it.type === 'stage' && zone.stages.includes(it.data.id)) ? i : -1)
+        .filter(i => i >= 0);
+      if (stageIdxs.length === 0) return null;
+      const topCy    = positions[stageIdxs[stageIdxs.length - 1]].cy; // topmost stage (smallest cy)
+      const bottomCy = positions[stageIdxs[0]].cy;                    // bottommost stage (largest cy)
+      return { zone, top: topCy - ND / 2 - 24, bottom: bottomCy + ND / 2 + 24 };
+    }).filter(Boolean);
+  }, [items, positions]);
 
   // Zone banner positions: between VS node and next zone's first stage
   const zoneBanners = useMemo(() => {
@@ -230,8 +250,8 @@ export default function StageMapScreen({ navigation }) {
     return () => clearTimeout(t);
   }, []);
 
-  const handlePlayStage = stage => lives > 0 && navigation.navigate('StageGame', { stageId: stage.id });
-  const handlePlayVs    = vs    => navigation.navigate('AdventureBoss', { vsId: vs.id });
+  const handlePlayStage = stage => navigation.navigate('StageGame', { stageId: stage.id });
+  const handlePlayVs    = vs    => navigation.navigate('BossIntro', { vsId: vs.id });
 
   const pathColor = idx => {
     if (idx === 0) return '#1A2030';
@@ -247,12 +267,50 @@ export default function StageMapScreen({ navigation }) {
       <StatusBar barStyle="light-content" backgroundColor={COLORS.bg} />
 
       <View style={S.hdr}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={S.back}>
-          <Text style={S.backTxt}>← BACK</Text>
+        <TouchableOpacity onPress={() => navigation.navigate('Title')} style={S.back}>
+          <Text style={S.backTxt}>HOME</Text>
         </TouchableOpacity>
         <Text style={S.title}>ADVENTURE</Text>
-        <View style={{ width: 60 }} />
+        <TouchableOpacity onPress={() => setMenuVisible(true)} style={S.menuBtn}>
+          <Text style={S.menuBtnTxt}>☰</Text>
+        </TouchableOpacity>
       </View>
+
+      {/* ── Hamburger menu modal ─────────────────────────────── */}
+      <Modal
+        visible={menuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuVisible(false)}
+      >
+        <TouchableOpacity
+          style={S.modalBackdrop}
+          activeOpacity={1}
+          onPress={() => setMenuVisible(false)}
+        >
+          <View style={S.menuSheet}>
+            <Text style={S.menuTitle}>MENU</Text>
+            <TouchableOpacity
+              style={S.menuItem}
+              onPress={() => { setMenuVisible(false); navigation.navigate('CharSelect'); }}
+            >
+              <Text style={S.menuItemTxt}>SELECT CRAB</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={S.menuItem}
+              onPress={() => { setMenuVisible(false); navigation.navigate('Settings'); }}
+            >
+              <Text style={S.menuItemTxt}>SETTINGS</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[S.menuItem, S.menuClose]}
+              onPress={() => setMenuVisible(false)}
+            >
+              <Text style={S.menuCloseTxt}>✕  CLOSE</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       <LivesBar lives={lives} msNext={msNext} />
 
@@ -263,6 +321,24 @@ export default function StageMapScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
       >
         <View style={{ position: 'absolute', width: SW, height: canvasH }}>
+
+          {/* ── Zone background stripes ── */}
+          {zoneStripes.map(({ zone, top, bottom }) => (
+            <View
+              key={`zs${zone.id}`}
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                left: 0, right: 0,
+                top,
+                height: bottom - top,
+                backgroundColor: zone.color + '0D',
+                borderTopWidth: 1,
+                borderBottomWidth: 1,
+                borderColor: zone.color + '22',
+              }}
+            />
+          ))}
 
           {/* ── Path segments ── */}
           {items.map((_, idx) => {
@@ -290,14 +366,16 @@ export default function StageMapScreen({ navigation }) {
               const st   = item.data;
               const zone = getZone(st.id);
               const isCl = !!clearedStages[st.id];
-              const isCu = st.id === stageProgress;
-              const isLk = st.id > stageProgress;
+              const hasVsGate = !isCl && VS_BATTLES.some(v => v.afterStage < st.id && !clearedVsBattles[v.id]);
+              const isLk = st.id > stageProgress || hasVsGate;
+              const isCu = !isCl && !isLk && st.id === stageProgress;
               return (
                 <StageNode key={`s${st.id}`}
                   cx={cx} cy={cy} stage={st}
                   status={isCl ? 'cleared' : isCu ? 'current' : isLk ? 'locked' : 'cleared'}
                   zoneColor={zone.color}
                   onPress={() => handlePlayStage(st)}
+                  charKey={selectedChar}
                 />
               );
             }
@@ -384,4 +462,34 @@ const S = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   adTxt: { fontSize: 10, color: COLORS.textDim },
+
+  // Header extras
+  menuBtn:    { width: 60, alignItems: 'flex-end', paddingRight: 4, paddingVertical: 4 },
+  menuBtnTxt: { fontSize: 22, color: COLORS.textMid },
+
+  // Hamburger modal
+  modalBackdrop: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'flex-start', alignItems: 'flex-end',
+    paddingTop: 56, paddingRight: 12,
+  },
+  menuSheet: {
+    backgroundColor: COLORS.panel,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    minWidth: 180,
+    overflow: 'hidden',
+  },
+  menuTitle: {
+    fontSize: 9, fontWeight: '900', color: COLORS.textDim, letterSpacing: 2,
+    paddingHorizontal: 20, paddingTop: 14, paddingBottom: 8,
+  },
+  menuItem: {
+    paddingVertical: 14, paddingHorizontal: 20,
+    borderTopWidth: 1, borderTopColor: COLORS.border,
+  },
+  menuItemTxt: { fontSize: 12, fontWeight: '800', color: COLORS.text, letterSpacing: 1 },
+  menuClose:   { },
+  menuCloseTxt:{ fontSize: 11, fontWeight: '800', color: COLORS.textDim, letterSpacing: 1 },
 });

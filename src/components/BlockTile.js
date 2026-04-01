@@ -14,12 +14,10 @@ export default React.memo(function BlockTile({ block, blockDef, selected }) {
   const isPyramid  = block.special === 'pyramid';
   const isObstacle = block.special === 'obstacle';
 
-  const bgColor     = isObstacle ? '#3A4050'
-                    : isRobot   ? SPECIAL_ROBOT.color
+  const bgColor     = isRobot   ? SPECIAL_ROBOT.color
                     : isPyramid ? SPECIAL_PYRAMID.color
                     : blockDef.color;
-  const borderColor = isObstacle ? '#5A6070'
-                    : selected  ? '#FFFFFF'
+  const borderColor = selected  ? '#FFFFFF'
                     : isPyramid ? SPECIAL_PYRAMID.accent
                     : isRobot   ? SPECIAL_ROBOT.accent
                     : blockDef.accent;
@@ -29,11 +27,13 @@ export default React.memo(function BlockTile({ block, blockDef, selected }) {
 
   if (isObstacle) {
     return (
-      <View style={[styles.tile, styles.obstacle, { borderColor }]}>
-        <View style={styles.obstacleCross}>
-          <View style={styles.obstacleBar} />
-          <View style={[styles.obstacleBar, styles.obstacleBarV]} />
+      <View style={[styles.tile, styles.obstacle]}>
+        {/* Bit sprite — darkened to look hostile/frozen */}
+        <View style={styles.obstacleSprite}>
+          <CrabSprite phase={1} char="p1" size={TILE_SIZE - 12} />
         </View>
+        {/* Dark overlay to distinguish from playable Bit */}
+        <View style={styles.obstacleDimmer} pointerEvents="none" />
         <View style={styles.shine} pointerEvents="none" />
       </View>
     );
@@ -101,27 +101,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(212,168,32,0.08)',
   },
 
-  // Obstacle styles
+  // Obstacle styles (looks like a captured/frozen Bit)
   obstacle: {
-    backgroundColor: '#3A4050',
+    backgroundColor: '#1A0A0A',
+    borderColor:     '#8B0000',
     alignItems:      'center',
     justifyContent:  'center',
   },
-  obstacleCross: {
-    width:          TILE_SIZE - 10,
-    height:         TILE_SIZE - 10,
-    alignItems:     'center',
-    justifyContent: 'center',
+  obstacleSprite: {
+    opacity: 0.75,
   },
-  obstacleBar: {
-    position:        'absolute',
-    width:           TILE_SIZE - 18,
-    height:          4,
-    borderRadius:    2,
-    backgroundColor: '#8090A8',
-  },
-  obstacleBarV: {
-    width:  4,
-    height: TILE_SIZE - 18,
+  obstacleDimmer: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius:    8,
+    backgroundColor: 'rgba(80,0,0,0.30)',
   },
 });

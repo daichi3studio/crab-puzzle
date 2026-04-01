@@ -21,7 +21,7 @@ import { COLORS, ALL_CHARS } from '../constants/gameConfig';
 function getCharDef(key) { return ALL_CHARS.find(c => c.key === key) ?? ALL_CHARS[0]; }
 
 export default function TitleScreen({ navigation }) {
-  const { selectedChar, difficulty, setDifficulty, hydrate } = useGameStore();
+  const { selectedChar, hydrate } = useGameStore();
   const charDef = getCharDef(selectedChar);
 
   useEffect(() => { hydrate(); }, [hydrate]);
@@ -85,27 +85,19 @@ export default function TitleScreen({ navigation }) {
           <Text style={styles.secondaryBtnText}>SELECT CRAB</Text>
         </TouchableOpacity>
 
-        {/* Difficulty toggle */}
-        <View style={styles.diffRow}>
-          <TouchableOpacity onPress={() => setDifficulty('easy')}>
-            <Text style={[
-              styles.diffLabel,
-              difficulty === 'easy' && styles.diffActive,
-            ]}>EASY</Text>
+        {/* Settings / Stats row */}
+        <View style={styles.utilRow}>
+          <TouchableOpacity
+            style={styles.utilBtn}
+            onPress={() => navigation.navigate('Stats')}
+          >
+            <Text style={styles.utilBtnText}>📊 STATS</Text>
           </TouchableOpacity>
-
-          <View style={styles.diffTrack}>
-            <View style={[
-              styles.diffThumb,
-              difficulty === 'hard' && styles.diffThumbRight,
-            ]} />
-          </View>
-
-          <TouchableOpacity onPress={() => setDifficulty('hard')}>
-            <Text style={[
-              styles.diffLabel,
-              difficulty === 'hard' && styles.diffActiveHard,
-            ]}>HARD</Text>
+          <TouchableOpacity
+            style={styles.utilBtn}
+            onPress={() => navigation.navigate('Settings')}
+          >
+            <Text style={styles.utilBtnText}>⚙️ SETTINGS</Text>
           </TouchableOpacity>
         </View>
 
@@ -182,46 +174,28 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
   },
 
-  // Difficulty toggle
-  diffRow: {
-    flexDirection: 'row',
-    alignItems:    'center',
-    gap:           12,
-    marginTop:     4,
+  utilRow: {
+    flexDirection:  'row',
+    gap:            12,
+    marginTop:      4,
   },
-  diffLabel: {
-    fontSize:   11,
-    fontWeight: '800',
+  utilBtn: {
+    paddingVertical:   8,
+    paddingHorizontal: 16,
+    borderRadius:      8,
+    borderWidth:       1,
+    borderColor:       COLORS.border,
+  },
+  utilBtnText: {
+    fontSize:   10,
+    fontWeight: '700',
     color:      COLORS.textDim,
-  },
-  diffActive:     { color: COLORS.accent },
-  diffActiveHard: { color: '#FF6666' },
-  diffTrack: {
-    width:           40,
-    height:          22,
-    borderRadius:    11,
-    backgroundColor: COLORS.panel,
-    borderWidth:     1,
-    borderColor:     COLORS.border,
-    justifyContent:  'center',
-    paddingHorizontal: 2,
-  },
-  diffThumb: {
-    width:           16,
-    height:          16,
-    borderRadius:    8,
-    backgroundColor: COLORS.accent,
-    alignSelf:       'flex-start',
-  },
-  diffThumbRight: {
-    backgroundColor: '#FF6666',
-    alignSelf:       'flex-end',
   },
 
   ver: {
     fontSize:   9,
     fontWeight: '600',
     color:      COLORS.textDim,
-    marginTop:  8,
+    marginTop:  4,
   },
 });

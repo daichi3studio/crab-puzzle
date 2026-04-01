@@ -13,13 +13,10 @@ import {
   TouchableOpacity, Animated, StatusBar,
 } from 'react-native';
 import { COLORS } from '../constants/gameConfig';
-import { STAGES } from '../constants/stages';
-
 export default function StageResultScreen({ route, navigation }) {
-  const { stageId, score, target, stars, cleared } = route.params;
-
-  const hasNext = stageId < STAGES.length;
-  const nextStageId = stageId + 1;
+  const { stageId, score, target, stars, cleared, maxCombo = 0, comboTarget = 99 } = route.params;
+  const comboOk = cleared && maxCombo >= comboTarget;
+  const scoreOk = cleared && score >= target * 1.3;
 
   // Entrance animation
   const scale   = useRef(new Animated.Value(0.4)).current;
@@ -95,31 +92,63 @@ export default function StageResultScreen({ route, navigation }) {
           </View>
         </View>
 
-        {/* ── Buttons ──────────────────────────────────────── */}
-        {cleared && hasNext && (
-          <TouchableOpacity
-            style={styles.primaryBtn}
-            onPress={() => navigation.replace('StageGame', { stageId: nextStageId })}
-          >
-            <Text style={styles.primaryBtnText}>NEXT STAGE  →</Text>
-          </TouchableOpacity>
+        {/* ── Star breakdown ───────────────────────────────── */}
+        {cleared && (
+          <View style={styles.breakdownPanel}>
+            <View style={styles.bRow}>
+              <Text style={[styles.bStar, { color: COLORS.gold }]}>★</Text>
+              <Text style={styles.bLabel}>CLEAR</Text>
+              <Text style={styles.bCheck}>✓</Text>
+            </View>
+            <View style={styles.bRow}>
+              <Text style={[styles.bStar, comboOk ? { color: COLORS.gold } : styles.bStarDim]}>★</Text>
+              <Text style={styles.bLabel}>COMBO ×{comboTarget + 1}</Text>
+              <Text style={[styles.bCheck, comboOk ? { color: COLORS.win } : styles.bMiss]}>
+                {comboOk ? '✓' : `×${maxCombo + 1}`}
+              </Text>
+            </View>
+            <View style={styles.bRow}>
+              <Text style={[styles.bStar, scoreOk ? { color: COLORS.gold } : styles.bStarDim]}>★</Text>
+              <Text style={styles.bLabel}>SCORE +30%</Text>
+              <Text style={[styles.bCheck, scoreOk ? { color: COLORS.win } : styles.bMiss]}>
+                {scoreOk ? '✓' : `${Math.floor((score / target - 1) * 100)}%`}
+              </Text>
+            </View>
+          </View>
         )}
 
-        <TouchableOpacity
-          style={cleared ? styles.secondaryBtn : styles.primaryBtn}
-          onPress={() => navigation.replace('StageGame', { stageId })}
-        >
-          <Text style={cleared ? styles.secondaryBtnText : styles.primaryBtnText}>
-            RETRY
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.tertiaryBtn}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.tertiaryBtnText}>BACK TO MAP</Text>
-        </TouchableOpacity>
+        {/* ── Buttons ──────────────────────────────────────── */}
+        {cleared ? (
+          <>
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              onPress={() => navigation.navigate('StageMap')}
+            >
+              <Text style={styles.primaryBtnText}>BACK TO MAP</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.secondaryBtn}
+              onPress={() => navigation.replace('StageGame', { stageId })}
+            >
+              <Text style={styles.secondaryBtnText}>RETRY</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              onPress={() => navigation.replace('StageGame', { stageId })}
+            >
+              <Text style={styles.primaryBtnText}>RETRY</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.tertiaryBtn}
+              onPress={() => navigation.navigate('StageMap')}
+            >
+              <Text style={styles.tertiaryBtnText}>BACK TO MAP</Text>
+            </TouchableOpacity>
+          </>
+        )}
 
       </View>
     </SafeAreaView>
@@ -224,4 +253,26 @@ const styles = StyleSheet.create({
     color:      COLORS.textDim,
     letterSpacing: 1,
   },
+
+  // Star breakdown panel
+  breakdownPanel: {
+    width:           '100%',
+    backgroundColor: COLORS.panel,
+    borderRadius:    10,
+    borderWidth:     1,
+    borderColor:     COLORS.border,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    gap:             6,
+  },
+  bRow: {
+    flexDirection:  'row',
+    alignItems:     'center',
+    gap:            10,
+  },
+  bStar:    { fontSize: 16, color: COLORS.gold },
+  bStarDim: { color: COLORS.border },
+  bLabel:   { flex: 1, fontSize: 9, fontWeight: '800', color: COLORS.textMid, letterSpacing: 1 },
+  bCheck:   { fontSize: 11, fontWeight: '900', color: COLORS.win },
+  bMiss:    { color: COLORS.textDim },
 });

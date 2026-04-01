@@ -22,7 +22,9 @@ import {
   TouchableOpacity, Animated, AppState, Modal, StatusBar,
 } from 'react-native';
 import PuzzleGrid from '../components/PuzzleGrid';
+import TutorialOverlay from '../components/TutorialOverlay';
 import { useGameStore } from '../store/gameStore';
+import { useSoundEffects } from '../hooks/useSoundEffects';
 import { COLORS } from '../constants/gameConfig';
 import { getStage, calcStars } from '../constants/stages';
 
@@ -44,27 +46,50 @@ function TargetBar({ score, target }) {
 
 // ─── Combo toast ─────────────────────────────────────────────────
 
-function ComboToast({ combo }) {
+const COMBO_LEVELS = [
+  { minCombo: 0, color: COLORS.gold,    textColor: '#000', size: 14, glow: false },
+  { minCombo: 2, color: '#FF8820',      textColor: '#FFF', size: 16, glow: false },
+  { minCombo: 3, color: '#FF3040',      textColor: '#FFF', size: 18, glow: true  },
+  { minCombo: 5, color: '#FF00CC',      textColor: '#FFF', size: 20, glow: true  },
+];
+
+function getComboStyle(combo) {
+  let style = COMBO_LEVELS[0];
+  for (const lvl of COMBO_LEVELS) {
+    if (combo >= lvl.minCombo) style = lvl;
+  }
+  return style;
+}
+
+function ComboToast({ combo, onFlash }) {
   const opacity = useRef(new Animated.Value(0)).current;
   const scale   = useRef(new Animated.Value(0.5)).current;
+  const lvl = getComboStyle(combo);
 
   useEffect(() => {
     if (combo === 0) return;
     opacity.setValue(1);
     scale.setValue(0.5);
     Animated.parallel([
-      Animated.spring(scale,   { toValue: 1, friction: 4, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, friction: 4, useNativeDriver: true }),
     ]).start();
+    if (lvl.glow && onFlash) onFlash(lvl.color);
     const t = setTimeout(() => {
       Animated.timing(opacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
-    }, 600);
+    }, 700);
     return () => clearTimeout(t);
   }, [combo]);
 
   if (combo === 0) return null;
   return (
-    <Animated.View style={[styles.combo, { opacity, transform: [{ scale }] }]}>
-      <Text style={styles.comboText}>COMBO ×{combo + 1}</Text>
+    <Animated.View style={[
+      styles.combo,
+      { opacity, transform: [{ scale }], backgroundColor: lvl.color },
+      lvl.glow && { shadowColor: lvl.color, shadowRadius: 20, shadowOpacity: 0.8, elevation: 16 },
+    ]}>
+      <Text style={[styles.comboText, { color: lvl.textColor, fontSize: lvl.size }]}>
+        COMBO ×{combo + 1}
+      </Text>
     </Animated.View>
   );
 }
@@ -94,21 +119,30 @@ function PauseModal({ visible, onResume, onQuit }) {
 export default function StageGameScreen({ route, navigation }) {
   const { stageId } = route.params;
   const stage = getStage(stageId);
-  const { spendLife, clearStage } = useGameStore();
+  const { spendLife, clearStage, recordCombo, recordStagePlayed, tutorialSeen, markTutorialSeen } = useGameStore();
+  const { play } = useSoundEffects();
 
   const [score,     setScore]     = useState(0);
   const [timeLeft,  setTimeLeft]  = useState(stage.timeLimit);
   const [phase,     setPhase]     = useState('playing'); // 'playing' | 'paused' | 'done'
   const [combo,     setCombo]     = useState(0);
   const [gridKey,   setGridKey]   = useState(0);
+  const [showTutorial, setShowTutorial] = useState(!tutorialSeen);
+
+  const flashAnim      = useRef(new Animated.Value(0)).current;
+  const [flashColor, setFlashColor] = useState('#FF3040');
+  const timerPulse     = useRef(new Animated.Value(1)).current;
+  const timerPulseLoop = useRef(null);
 
   const timerRef    = useRef(null);
   const appStateRef = useRef(AppState.currentState);
-  const scoreRef    = useRef(0); // sync ref for callbacks
+  const scoreRef    = useRef(0);    // sync ref for callbacks
+  const maxComboRef = useRef(0);    // sync ref for max combo this session
 
-  // Spend a life when stage starts
+  // Spend a life and record play when stage starts
   useEffect(() => {
     spendLife();
+    recordStagePlayed();
   }, []);
 
   // ─── Timer ───────────────────────────────────────────────────
@@ -145,42 +179,73 @@ export default function StageGameScreen({ route, navigation }) {
   useEffect(() => {
     if (phase !== 'done') return;
     const finalScore = scoreRef.current;
-    const stars = calcStars(finalScore, stage.target);
+    const maxCombo   = maxComboRef.current;
+    const stars = calcStars(finalScore, stage.target, maxCombo, stage.comboTarget);
     const cleared = finalScore >= stage.target;
 
     if (cleared) {
       clearStage({ stageId: stage.id, score: finalScore, stars });
+      play('clear');
+    } else {
+      play('fail');
     }
 
     setTimeout(() => {
       navigation.replace('StageResult', {
-        stageId:  stage.id,
-        score:    finalScore,
-        target:   stage.target,
+        stageId:     stage.id,
+        score:       finalScore,
+        target:      stage.target,
         stars,
         cleared,
+        maxCombo,
+        comboTarget: stage.comboTarget,
       });
     }, 300);
   }, [phase]);
 
   // ─── Score callbacks ─────────────────────────────────────────
   const handleScore = useCallback(pts => {
+    play('match');
     setScore(prev => {
       const next = prev + pts;
       scoreRef.current = next;
       return next;
     });
-  }, []);
+  }, [play]);
 
   const handleCombo = useCallback(level => {
+    play('combo');
     setCombo(level);
+    recordCombo(level);
+    if (level > maxComboRef.current) maxComboRef.current = level;
     setTimeout(() => setCombo(0), 1000);
-  }, []);
+  }, [play, recordCombo]);
+
+  const handleFlash = useCallback(color => {
+    setFlashColor(color);
+    flashAnim.setValue(0.35);
+    Animated.timing(flashAnim, { toValue: 0, duration: 350, useNativeDriver: true }).start();
+  }, [flashAnim]);
+
+  // ─── Timer pulse at ≤10s ─────────────────────────────────────
+  useEffect(() => {
+    if (timeLeft === 10 && phase === 'playing') {
+      timerPulseLoop.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(timerPulse, { toValue: 1.18, duration: 280, useNativeDriver: true }),
+          Animated.timing(timerPulse, { toValue: 1.00, duration: 280, useNativeDriver: true }),
+        ])
+      );
+      timerPulseLoop.current.start();
+    }
+    if (timeLeft === 0 || phase !== 'playing') {
+      timerPulseLoop.current?.stop();
+      timerPulse.setValue(1);
+    }
+  }, [timeLeft, phase]);
 
   // ─── Timer color ─────────────────────────────────────────────
-  const timerColor = timeLeft <= 5  ? COLORS.timerDanger
-                   : timeLeft <= 10 ? COLORS.timerWarn
-                   : COLORS.text;
+  const timerColor = timeLeft <= 10 ? COLORS.timerDanger : COLORS.text;
 
   const reached = score >= stage.target;
 
@@ -194,14 +259,20 @@ export default function StageGameScreen({ route, navigation }) {
           <Text style={styles.pauseIcon}>⏸</Text>
         </TouchableOpacity>
 
+        {/* Center: stage info + big timer */}
         <View style={styles.headerCenter}>
           <Text style={styles.stageName}>{stage.name}</Text>
           <Text style={styles.stageSub}>{stage.subtitle}</Text>
+          <Animated.Text style={[
+            styles.timerNum,
+            { color: timerColor, transform: [{ scale: timerPulse }] },
+            timeLeft <= 10 && styles.timerNumDanger,
+          ]}>
+            {timeLeft}
+          </Animated.Text>
         </View>
 
-        <View style={[styles.timerBox, timeLeft <= 10 && styles.timerBoxWarn]}>
-          <Text style={[styles.timerNum, { color: timerColor }]}>{timeLeft}</Text>
-        </View>
+        <View style={{ width: 36 }} />
       </View>
 
       {/* ── Progress bar ─────────────────────────────────────── */}
@@ -216,8 +287,14 @@ export default function StageGameScreen({ route, navigation }) {
         </View>
       </View>
 
+      {/* ── Combo flash overlay ─────────────────────────────── */}
+      <Animated.View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFill, { opacity: flashAnim, backgroundColor: flashColor, zIndex: 90 }]}
+      />
+
       {/* ── Combo toast ─────────────────────────────────────── */}
-      <ComboToast key={combo} combo={combo} />
+      <ComboToast key={combo} combo={combo} onFlash={handleFlash} />
 
       {/* ── Grid ────────────────────────────────────────────── */}
       <View style={styles.gridWrap}>
@@ -226,7 +303,7 @@ export default function StageGameScreen({ route, navigation }) {
           hard={false}
           onScoreAdd={handleScore}
           onCombo={handleCombo}
-          paused={phase !== 'playing'}
+          paused={phase !== 'playing' || showTutorial}
           obstacles={stage.obstacles}
           obstacleRate={stage.obstacleRate}
         />
@@ -242,6 +319,15 @@ export default function StageGameScreen({ route, navigation }) {
         visible={phase === 'paused'}
         onResume={() => setPhase('playing')}
         onQuit={() => navigation.goBack()}
+      />
+
+      {/* ── Tutorial overlay (first launch) ─────────────────── */}
+      <TutorialOverlay
+        visible={showTutorial}
+        onDone={() => {
+          setShowTutorial(false);
+          markTutorialSeen();
+        }}
       />
     </SafeAreaView>
   );
@@ -276,21 +362,17 @@ const styles = StyleSheet.create({
   pauseIconBtn: { padding: 6 },
   pauseIcon:    { fontSize: 18, color: COLORS.textDim },
 
-  timerBox: {
-    minWidth:      44,
-    alignItems:    'center',
-    justifyContent:'center',
-    paddingHorizontal: 8,
-    paddingVertical:   4,
-    borderRadius:  8,
-    borderWidth:   1,
-    borderColor:   COLORS.border,
-  },
-  timerBoxWarn: { borderColor: COLORS.timerWarn },
   timerNum: {
-    fontSize:    22,
+    fontSize:    44,
     fontWeight:  '900',
     fontVariant: ['tabular-nums'],
+    color:       COLORS.text,
+    marginTop:   4,
+  },
+  timerNumDanger: {
+    textShadowColor:  COLORS.timerDanger,
+    textShadowRadius: 12,
+    textShadowOffset: { width: 0, height: 0 },
   },
 
   // Progress

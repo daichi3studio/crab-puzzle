@@ -72,8 +72,7 @@ function ComboToast({ combo }) {
 // ─── Main ───────────────────────────────────────────────────────
 
 export default function GameScreen({ navigation }) {
-  const { difficulty, selectedChar, recordResult } = useGameStore();
-  const isHard = difficulty === 'hard';
+  const { selectedChar, recordResult } = useGameStore();
 
   const playerChar = getCharDef(selectedChar);
   const [oppChar]  = useState(() => randomOppChar());
@@ -112,12 +111,11 @@ export default function GameScreen({ navigation }) {
   // ─── Opponent ─────────────────────────────────────────────────
   useEffect(() => {
     if (phase !== 'playing') return;
-    const cfg = isHard ? OPP_HARD : OPP_EASY;
     oppRef.current = setInterval(() => {
-      setOppScore(prev => prev + Math.floor(randBetween(cfg.min, cfg.max)));
+      setOppScore(prev => prev + Math.floor(randBetween(OPP_EASY.min, OPP_EASY.max)));
     }, 1000);
     return () => clearInterval(oppRef.current);
-  }, [phase, round, isHard]);
+  }, [phase, round]);
 
   // ─── End round ────────────────────────────────────────────────
   const endRound = useCallback(() => {
@@ -149,11 +147,10 @@ export default function GameScreen({ navigation }) {
     const fp = totalPlayer + playerScore;
     const fo = totalOpp    + oppScore;
     const won = fp > fo;
-    recordResult({ won, hard: isHard, score: fp });
+    recordResult({ won, score: fp });
     setTimeout(() => {
       navigation.replace('Result', {
-        playerScore: fp, oppScore: fo, won, roundScores,
-        difficulty, selectedChar,
+        playerScore: fp, oppScore: fo, won, roundScores, selectedChar,
       });
     }, 500);
   }, [phase]);
@@ -214,7 +211,7 @@ export default function GameScreen({ navigation }) {
       <View style={styles.gridWrap}>
         <PuzzleGrid
           key={gridKey}
-          hard={isHard}
+          hard={false}
           onScoreAdd={handleScore}
           onCombo={handleCombo}
           paused={phase !== 'playing'}

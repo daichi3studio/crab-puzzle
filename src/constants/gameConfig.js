@@ -46,8 +46,8 @@ export const SCORE_PYRAMID      = 500;    // bonus for clearing pyramid
 export const CASCADE_MULT       = 1.3;    // per cascade level
 
 // ─── Opponent AI (points per second range) ───────────────────────
-export const OPP_EASY = { min: 5,  max: 15 };
-export const OPP_HARD = { min: 15, max: 45 };
+export const OPP_EASY = { min: 15, max: 35 };
+export const OPP_HARD = { min: 25, max: 60 };
 
 // ─── Character unlock thresholds ─────────────────────────────────
 export const UNLOCK_P2_AT       = 3;

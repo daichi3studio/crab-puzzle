@@ -7,7 +7,6 @@ const STORAGE_KEY = '@crab_puzzle_save_v2';
 const DEFAULT_STATE = {
   // Character & battle
   selectedChar:  'p1',
-  difficulty:    'easy',
   totalWins:     0,
   hardWins:      0,
   bestScore:     0,
@@ -23,6 +22,18 @@ const DEFAULT_STATE = {
   // Lives
   lives:          MAX_LIVES,
   livesUpdatedAt: null,        // ISO timestamp — when lives were last modified
+
+  // Settings
+  sfxEnabled:       true,
+  bgmEnabled:       true,
+  vibrationEnabled: true,
+
+  // Stats
+  bestCombo:       0,            // highest cascade chain ever
+  totalStagePlays: 0,            // total stage attempts (including fails)
+
+  // Onboarding
+  tutorialSeen: false,
 };
 
 // ─── Compute current lives including time-based recovery ─────────
@@ -97,22 +108,47 @@ export const useGameStore = create((set, get) => ({
 
   // ─── Battle / character ─────────────────────────────────────────
 
-  setDifficulty: (difficulty) => {
-    set({ difficulty });
-    get()._save();
-  },
-
   setSelectedChar: (key) => {
     set({ selectedChar: key });
     get()._save();
   },
 
-  recordResult: ({ won, hard, score }) => {
+  // ─── Settings ───────────────────────────────────────────────────
+
+  setSettings: (patch) => {
+    set(patch);
+    get()._save();
+  },
+
+  // ─── Stats ──────────────────────────────────────────────────────
+
+  recordCombo: (comboLevel) => {
+    const { bestCombo } = get();
+    if (comboLevel > bestCombo) {
+      set({ bestCombo: comboLevel });
+      get()._save();
+    }
+  },
+
+  recordStagePlayed: () => {
+    set(s => ({ totalStagePlays: s.totalStagePlays + 1 }));
+    get()._save();
+  },
+
+  // ─── Onboarding ─────────────────────────────────────────────────
+
+  markTutorialSeen: () => {
+    set({ tutorialSeen: true });
+    get()._save();
+  },
+
+  // ─── Battle / character ─────────────────────────────────────────
+
+  recordResult: ({ won, score }) => {
     const prev = get();
     const totalWins = prev.totalWins + (won ? 1 : 0);
-    const hardWins  = prev.hardWins  + (won && hard ? 1 : 0);
     const bestScore = Math.max(prev.bestScore, score);
-    set({ totalWins, hardWins, bestScore });
+    set({ totalWins, bestScore });
     get()._save();
   },
 
@@ -123,7 +159,6 @@ export const useGameStore = create((set, get) => ({
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({
         selectedChar:     s.selectedChar,
-        difficulty:       s.difficulty,
         totalWins:        s.totalWins,
         hardWins:         s.hardWins,
         bestScore:        s.bestScore,
@@ -133,6 +168,12 @@ export const useGameStore = create((set, get) => ({
         unlockedChars:    s.unlockedChars,
         lives:            s.lives,
         livesUpdatedAt:   s.livesUpdatedAt,
+        sfxEnabled:       s.sfxEnabled,
+        bgmEnabled:       s.bgmEnabled,
+        vibrationEnabled: s.vibrationEnabled,
+        bestCombo:        s.bestCombo,
+        totalStagePlays:  s.totalStagePlays,
+        tutorialSeen:     s.tutorialSeen,
       }));
     } catch (_) {}
   },
