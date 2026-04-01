@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { MAX_LIVES, LIFE_REGEN_MS } from '../constants/stages';
+import { MAX_LIVES, LIFE_REGEN_MS, VS_BATTLES } from '../constants/stages';
 
 const STORAGE_KEY = '@crab_puzzle_save_v2';
 
@@ -13,8 +13,12 @@ const DEFAULT_STATE = {
   bestScore:     0,
 
   // Stage progress
-  stageProgress: 1,            // highest unlocked stage ID
-  clearedStages: {},           // { [stageId]: { stars, score } }
+  stageProgress:    1,            // highest unlocked stage ID
+  clearedStages:    {},           // { [stageId]: { stars, score } }
+
+  // Adventure VS battles & character unlocks
+  clearedVsBattles: {},           // { [vsId]: true }
+  unlockedChars:    ['p1'],       // array of unlocked char keys
 
   // Lives
   lives:          MAX_LIVES,
@@ -75,6 +79,22 @@ export const useGameStore = create((set, get) => ({
     get()._save();
   },
 
+  // ─── Adventure VS battles ───────────────────────────────────────
+
+  clearVsBattle: (vsId) => {
+    const { clearedVsBattles, unlockedChars } = get();
+    if (clearedVsBattles[vsId]) return; // already cleared
+    const vs = VS_BATTLES.find(v => v.id === vsId);
+    const newUnlocked = vs && !unlockedChars.includes(vs.unlocksChar)
+      ? [...unlockedChars, vs.unlocksChar]
+      : unlockedChars;
+    set({
+      clearedVsBattles: { ...clearedVsBattles, [vsId]: true },
+      unlockedChars:    newUnlocked,
+    });
+    get()._save();
+  },
+
   // ─── Battle / character ─────────────────────────────────────────
 
   setDifficulty: (difficulty) => {
@@ -102,15 +122,17 @@ export const useGameStore = create((set, get) => ({
     const s = get();
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({
-        selectedChar:  s.selectedChar,
-        difficulty:    s.difficulty,
-        totalWins:     s.totalWins,
-        hardWins:      s.hardWins,
-        bestScore:     s.bestScore,
-        stageProgress: s.stageProgress,
-        clearedStages: s.clearedStages,
-        lives:         s.lives,
-        livesUpdatedAt: s.livesUpdatedAt,
+        selectedChar:     s.selectedChar,
+        difficulty:       s.difficulty,
+        totalWins:        s.totalWins,
+        hardWins:         s.hardWins,
+        bestScore:        s.bestScore,
+        stageProgress:    s.stageProgress,
+        clearedStages:    s.clearedStages,
+        clearedVsBattles: s.clearedVsBattles,
+        unlockedChars:    s.unlockedChars,
+        lives:            s.lives,
+        livesUpdatedAt:   s.livesUpdatedAt,
       }));
     } catch (_) {}
   },

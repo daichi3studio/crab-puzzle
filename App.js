@@ -8,9 +8,11 @@ import TitleScreen       from './src/screens/TitleScreen';
 import CharSelectScreen  from './src/screens/CharSelectScreen';
 import GameScreen        from './src/screens/GameScreen';
 import ResultScreen      from './src/screens/ResultScreen';
-import StageMapScreen    from './src/screens/StageMapScreen';
-import StageGameScreen   from './src/screens/StageGameScreen';
-import StageResultScreen from './src/screens/StageResultScreen';
+import StageMapScreen          from './src/screens/StageMapScreen';
+import StageGameScreen         from './src/screens/StageGameScreen';
+import StageResultScreen       from './src/screens/StageResultScreen';
+import AdventureBossScreen     from './src/screens/AdventureBossScreen';
+import AdventureBossResultScreen from './src/screens/AdventureBossResultScreen';
 import { COLORS }        from './src/constants/gameConfig';
 
 const Stack = createNativeStackNavigator();
@@ -36,9 +38,11 @@ export default function App() {
         <Stack.Screen name="CharSelect"  component={CharSelectScreen}  />
         <Stack.Screen name="Game"        component={GameScreen}        />
         <Stack.Screen name="Result"      component={ResultScreen}      />
-        <Stack.Screen name="StageMap"    component={StageMapScreen}    />
-        <Stack.Screen name="StageGame"   component={StageGameScreen}   initialParams={{ stageId: 1 }} />
-        <Stack.Screen name="StageResult" component={StageResultScreen} />
+        <Stack.Screen name="StageMap"            component={StageMapScreen}           />
+        <Stack.Screen name="StageGame"           component={StageGameScreen}          initialParams={{ stageId: 1 }} />
+        <Stack.Screen name="StageResult"         component={StageResultScreen}        />
+        <Stack.Screen name="AdventureBoss"       component={AdventureBossScreen}      initialParams={{ vsId: 'vs1' }} />
+        <Stack.Screen name="AdventureBossResult" component={AdventureBossResultScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

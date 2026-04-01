@@ -7,16 +7,18 @@ import { useGameStore } from '../store/gameStore';
 import { ALL_CHARS, COLORS } from '../constants/gameConfig';
 
 export default function CharSelectScreen({ navigation }) {
-  const { totalWins, hardWins, selectedChar, setSelectedChar } = useGameStore();
+  const { totalWins, hardWins, selectedChar, setSelectedChar, unlockedChars } = useGameStore();
 
+  // Unlocked by Adventure VS battles (primary) OR old win-count system (VS Battle mode)
   const isUnlocked = (ch) => {
+    if (unlockedChars?.includes(ch.key)) return true;
     if (ch.requireHard > 0) return hardWins >= ch.requireHard;
     return totalWins >= ch.requireWins;
   };
 
   const lockLabel = (ch) => {
     if (ch.requireHard > 0) return `HARD ×${ch.requireHard}`;
-    if (ch.requireWins > 0) return `WIN ×${ch.requireWins}`;
+    if (ch.requireWins > 0) return `ADVENTURE`;
     return '';
   };
 

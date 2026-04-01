@@ -78,6 +78,27 @@ export const STAGES = [
   { id: 32, name: 'BUG #032', subtitle: 'System Failure',  zone: 7, target: 4100, timeLimit: 30, obstacles: 6, obstacleRate: 0.14 },
 ];
 
+// ─── VS Battles (appear after each zone) ────────────────────────
+// afterStage: the last stage of the zone this VS follows
+// unlocksChar: char key from ALL_CHARS that winning unlocks
+export const VS_BATTLES = [
+  { id: 'vs1', afterStage:  5, unlocksChar: 'p2',     charName: 'Core',   difficulty: 'easy'   },
+  { id: 'vs2', afterStage: 10, unlocksChar: 'chip',   charName: 'Chip',   difficulty: 'easy'   },
+  { id: 'vs3', afterStage: 15, unlocksChar: 'wing',   charName: 'Wing',   difficulty: 'normal' },
+  { id: 'vs4', afterStage: 20, unlocksChar: 'gentle', charName: 'Gentle', difficulty: 'normal' },
+  { id: 'vs5', afterStage: 25, unlocksChar: 'power',  charName: 'Power',  difficulty: 'hard'   },
+  { id: 'vs6', afterStage: 30, unlocksChar: 'pink',   charName: 'Pink',   difficulty: 'hard'   },
+];
+
+export function getVsBattle(id) {
+  return VS_BATTLES.find(v => v.id === id);
+}
+
+// VS battle that appears after a given stageId (null if none)
+export function getVsAfterStage(stageId) {
+  return VS_BATTLES.find(v => v.afterStage === stageId) ?? null;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────
 
 export function getStage(id) {
