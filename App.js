@@ -37,7 +37,7 @@ export default function App() {
         <Stack.Screen name="Game"        component={GameScreen}        />
         <Stack.Screen name="Result"      component={ResultScreen}      />
         <Stack.Screen name="StageMap"    component={StageMapScreen}    />
-        <Stack.Screen name="StageGame"   component={StageGameScreen}   />
+        <Stack.Screen name="StageGame"   component={StageGameScreen}   initialParams={{ stageId: 1 }} />
         <Stack.Screen name="StageResult" component={StageResultScreen} />
       </Stack.Navigator>
     </NavigationContainer>
