@@ -181,23 +181,27 @@ function collectMatchedIds(groups, grid) {
 }
 
 // ─── Block component (stable key = UUID) ─────────────────────────
+const blockBaseStyle = {
+  position: 'absolute',
+  width:    TILE_SIZE,
+  height:   TILE_SIZE,
+};
+
 const BlockAnim = React.memo(
   ({ id, blockData, ax, ay, ascale, aopacity, isDragging }) => {
     const def = BLOCKS[blockData.type] ?? BLOCKS[0];
 
+    // transform array refs are stable (Animated.Value identity never changes)
+    // useMemo deps won't change after mount → allocated once per block
+    const animStyle = React.useMemo(() => ({
+      ...blockBaseStyle,
+      zIndex:    isDragging ? 20 : 1,
+      transform: [{ translateX: ax }, { translateY: ay }, { scale: ascale }],
+      opacity:   aopacity,
+    }), [isDragging, ax, ay, ascale, aopacity]);
+
     return (
-      <Animated.View style={{
-        position: 'absolute',
-        width:    TILE_SIZE,
-        height:   TILE_SIZE,
-        zIndex:   isDragging ? 20 : 1,
-        transform: [
-          { translateX: ax },
-          { translateY: ay },
-          { scale: ascale },
-        ],
-        opacity: aopacity,
-      }}>
+      <Animated.View style={animStyle}>
         <BlockTile block={blockData} blockDef={def} selected={isDragging} />
       </Animated.View>
     );
@@ -208,7 +212,7 @@ const BlockAnim = React.memo(
 );
 
 // ─── Main component ───────────────────────────────────────────────
-export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused, obstacles = 0, obstacleRate = 0 }) {
+const PuzzleGrid = React.memo(function PuzzleGrid({ hard, onScoreAdd, onCombo, paused, obstacles = 0, obstacleRate = 0 }) {
   const onScoreAddRef = useRef(onScoreAdd);
   const onComboRef    = useRef(onCombo);
   onScoreAddRef.current = onScoreAdd;
@@ -456,7 +460,7 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused, obstacle
         allNewIds.forEach(id => next.add(id));
         return next;
       });
-      await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+      await new Promise(res => requestAnimationFrame(res));
     }
 
     // ── Phase 3: Animate each cascade level ──────────────────────
@@ -464,26 +468,23 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused, obstacle
       onScoreAddRef.current(pts);
       if (cascade > 0) onComboRef.current(cascade);
 
-      // Pop: punch up
+      // Pop: punch → collapse+fade in one await (saves one async boundary per level)
       const matchArr = [...matchedIds];
       await new Promise(res =>
-        Animated.parallel(matchArr.map(id =>
-          Animated.timing(getAnim(id).scale, {
-            toValue: 1.45, duration: POP_PUNCH_MS, useNativeDriver: true,
-          })
-        )).start(res)
+        Animated.parallel(matchArr.flatMap(id => {
+          const a = getAnim(id);
+          return [
+            Animated.sequence([
+              Animated.timing(a.scale,   { toValue: 1.45, duration: POP_PUNCH_MS, useNativeDriver: true }),
+              Animated.timing(a.scale,   { toValue: 0,    duration: POP_FADE_MS,  useNativeDriver: true }),
+            ]),
+            Animated.sequence([
+              Animated.delay(POP_PUNCH_MS),
+              Animated.timing(a.opacity, { toValue: 0, duration: POP_FADE_MS, useNativeDriver: true }),
+            ]),
+          ];
+        })).start(res)
       );
-
-      // Pop: collapse + fade
-      const collapseAnims = [];
-      for (const id of matchArr) {
-        const a = getAnim(id);
-        collapseAnims.push(
-          Animated.timing(a.scale,   { toValue: 0, duration: POP_FADE_MS, useNativeDriver: true }),
-          Animated.timing(a.opacity, { toValue: 0, duration: POP_FADE_MS, useNativeDriver: true }),
-        );
-      }
-      await new Promise(res => Animated.parallel(collapseAnims).start(res));
 
       // Drop
       if (drops.length > 0) {
@@ -752,7 +753,11 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused, obstacle
     return () => clearInterval(t);
   }, [obstacleRate, paused, spawnObstacle]);
 
-  initAnims();
+  // ─── Ensure anim entries exist for all current blocks ─────────
+  // Only runs when the set of live blocks changes, not on every render
+  useEffect(() => { initAnims(); }, [liveIds]);
+
+  const liveIdsArr = useMemo(() => Array.from(liveIds), [liveIds]);
 
   const posMap = useMemo(() => {
     const m    = new Map();
@@ -773,7 +778,7 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused, obstacle
       {...panResponder.panHandlers}
     >
       <View style={[styles.inner, { width: GRID_W, height: GRID_H }]}>
-        {Array.from(liveIds).map(id => {
+        {liveIdsArr.map(id => {
           const blockData = bmap.get(id);
           if (!blockData) return null;
           const pos = posMap.get(id);
@@ -826,7 +831,16 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused, obstacle
       </View>
     </View>
   );
-}
+}, (prev, next) =>
+  prev.hard         === next.hard         &&
+  prev.paused       === next.paused       &&
+  prev.obstacles    === next.obstacles    &&
+  prev.obstacleRate === next.obstacleRate &&
+  prev.onScoreAdd   === next.onScoreAdd   &&
+  prev.onCombo      === next.onCombo,
+);
+
+export default PuzzleGrid;
 
 const styles = StyleSheet.create({
   outer: {
