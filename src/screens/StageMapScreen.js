@@ -1,415 +1,383 @@
 /**
- * StageMapScreen — Candy Crush-style stage map
- *
- * Layout:
- *   Top bar: Lives ♥♥♥♥♥  |  countdown
- *   ScrollView: zigzag stage nodes + VS battle nodes (after each zone)
- *   Bottom: ad banner
- *
- * VS battle node: appears after every 5 stages, shows the CPU character.
- * Winning the VS unlocks that character for use in CharSelect.
+ * StageMapScreen — Winding road map
+ * Stage 1 at bottom, stage 40 at top. Scroll UP to progress.
  */
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
-  View, Text, StyleSheet, SafeAreaView, ScrollView,
-  TouchableOpacity, Animated, StatusBar,
+  View, Text, SafeAreaView, ScrollView,
+  TouchableOpacity, Animated, StatusBar, useWindowDimensions,
+  StyleSheet,
 } from 'react-native';
 import CrabSprite from '../components/CrabSprite';
 import { useGameStore, msUntilNextLife } from '../store/gameStore';
 import { COLORS, ALL_CHARS } from '../constants/gameConfig';
-import {
-  STAGES, ZONES, MAX_LIVES, LIFE_REGEN_MS, getZone,
-  VS_BATTLES, getVsAfterStage,
-} from '../constants/stages';
+import { STAGES, ZONES, MAX_LIVES, getZone, getVsAfterStage } from '../constants/stages';
 
-function getCharDef(key) { return ALL_CHARS.find(c => c.key === key) ?? ALL_CHARS[0]; }
+const gcd = k => ALL_CHARS.find(c => c.key === k) ?? ALL_CHARS[0];
 
-// ─── Lives display ───────────────────────────────────────────────
+const ND   = 54;   // stage node diameter
+const VD   = 66;   // VS node diameter
+const YS   = 100;  // vertical step between node centers
+const PADV = 80;   // canvas top/bottom padding
 
+// X positions (fraction of screen width) cycling per stage node
+const XF = [0.18, 0.52, 0.82, 0.52];
+
+// ── LivesBar ─────────────────────────────────────────────────────
 function LivesBar({ lives, msNext }) {
-  const [tick, setTick] = useState(0);
+  const [t, setT] = useState(0);
   useEffect(() => {
     if (lives >= MAX_LIVES) return;
-    const t = setInterval(() => setTick(v => v + 1), 1000);
-    return () => clearInterval(t);
+    const id = setInterval(() => setT(v => v + 1), 1000);
+    return () => clearInterval(id);
   }, [lives]);
-
-  const remaining = msNext - tick * 1000;
-  const secs = Math.max(0, Math.ceil(remaining / 1000));
-  const mins = Math.floor(secs / 60);
-  const s    = secs % 60;
-  const countdown = `${mins}:${String(s).padStart(2, '0')}`;
-
+  const secs = Math.max(0, Math.ceil((msNext - t * 1000) / 1000));
   return (
-    <View style={styles.livesBar}>
-      <View style={styles.livesHearts}>
+    <View style={S.livesBar}>
+      <View style={S.hearts}>
         {Array.from({ length: MAX_LIVES }).map((_, i) => (
-          <Text key={i} style={[styles.heart, i < lives ? styles.heartFull : styles.heartEmpty]}>
-            ♥
-          </Text>
+          <Text key={i} style={[S.heart, i < lives ? S.hFull : S.hEmpty]}>♥</Text>
         ))}
       </View>
       {lives < MAX_LIVES && (
-        <Text style={styles.lifeTimer}>{countdown}</Text>
+        <Text style={S.lifeTimer}>{Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}</Text>
       )}
     </View>
   );
 }
 
-// ─── Single stage node ──────────────────────────────────────────
+// ── Road path segment between two canvas points ───────────────────
+const PathSeg = React.memo(({ x1, y1, x2, y2, color }) => {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  const ang = Math.atan2(dy, dx);
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+  const tf = [{ rotate: `${ang}rad` }];
+  return (
+    <>
+      <View style={[S.pBase, { width: len, height: 14, borderRadius: 7, left: mx - len / 2, top: my - 7, backgroundColor: 'rgba(0,0,0,0.55)', transform: tf }]} />
+      <View style={[S.pBase, { width: len, height: 9,  borderRadius: 5, left: mx - len / 2, top: my - 4, backgroundColor: color, transform: tf }]} />
+    </>
+  );
+});
 
-function StageNode({ stage, status, onPress, zoneColor }) {
+// ── Stage node (absolute positioned on canvas) ────────────────────
+function StageNode({ cx, cy, stage, status, zoneColor, onPress }) {
   const pulse = useRef(new Animated.Value(1)).current;
-
+  const isCur = status === 'current';
   useEffect(() => {
-    if (status !== 'current') return;
-    const loop = Animated.loop(Animated.sequence([
-      Animated.timing(pulse, { toValue: 1.12, duration: 700, useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 1.00, duration: 700, useNativeDriver: true }),
+    if (!isCur) return;
+    const lp = Animated.loop(Animated.sequence([
+      Animated.timing(pulse, { toValue: 1.22, duration: 580, useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 1.00, duration: 580, useNativeDriver: true }),
     ]));
-    loop.start();
-    return () => loop.stop();
-  }, [status]);
+    lp.start(); return () => lp.stop();
+  }, [isCur]);
 
-  const isLocked  = status === 'locked';
-  const isCleared = status === 'cleared';
-  const isCurrent = status === 'current';
-
-  const nodeBg    = isLocked ? COLORS.panel : isCleared ? zoneColor + 'CC' : zoneColor;
-  const borderCol = isLocked ? COLORS.border : isCleared ? zoneColor : '#FFFFFF';
+  const isLk = status === 'locked';
+  const isCl = status === 'cleared';
+  const bg = isLk ? '#0E1218' : isCl ? zoneColor + '90' : zoneColor;
+  const bc = isCur ? '#FFFFFF' : isLk ? '#1E2430' : isCl ? zoneColor : '#FFFFFF55';
+  const r  = ND / 2;
 
   return (
-    <TouchableOpacity onPress={isLocked ? null : onPress} activeOpacity={isLocked ? 1 : 0.75} disabled={isLocked}>
+    <TouchableOpacity
+      onPress={isLk ? null : onPress}
+      activeOpacity={isLk ? 1 : 0.7}
+      style={{ position: 'absolute', left: cx - r, top: cy - r }}
+    >
       <Animated.View style={[
-        styles.node,
-        { backgroundColor: nodeBg, borderColor: borderCol },
-        isCurrent && { transform: [{ scale: pulse }] },
+        S.node,
+        { backgroundColor: bg, borderColor: bc, borderWidth: isCur ? 3 : 2 },
+        isCur && { transform: [{ scale: pulse }], shadowColor: '#FFFFFF', shadowOpacity: 0.7, shadowRadius: 12, elevation: 10 },
+        !isCur && !isLk && { shadowColor: zoneColor, shadowOpacity: 0.4, shadowRadius: 5, elevation: 4 },
+        isLk && { opacity: 0.38 },
       ]}>
-        {isLocked ? (
-          <Text style={styles.nodeLock}>🔒</Text>
-        ) : (
-          <>
-            <Text style={styles.nodeNum}>{stage.id}</Text>
-            {isCleared && <Text style={styles.nodeCheck}>✓</Text>}
-          </>
-        )}
+        {isLk
+          ? <Text style={S.nodeLk}>🔒</Text>
+          : <>
+              <Text style={S.nodeN}>{stage.id}</Text>
+              {isCl && <Text style={S.nodeCk}>✓</Text>}
+            </>
+        }
       </Animated.View>
     </TouchableOpacity>
   );
 }
 
-// ─── VS Battle node ─────────────────────────────────────────────
-// Shows the CPU character standing on the node. Locked until the
-// previous zone is fully cleared.
-
-function VsNode({ vs, status, onPress }) {
-  // status: 'locked' | 'available' | 'cleared'
-  const charDef = getCharDef(vs.unlocksChar);
-  const pulse   = useRef(new Animated.Value(1)).current;
+// ── VS node (absolute positioned on canvas) ───────────────────────
+function VsNode({ cx, cy, vs, status, onPress }) {
+  const cd = gcd(vs.unlocksChar);
+  const pulse = useRef(new Animated.Value(1)).current;
+  const isAv = status === 'available';
+  const isCl = status === 'cleared';
+  const isLk = status === 'locked';
 
   useEffect(() => {
-    if (status !== 'available') return;
-    const loop = Animated.loop(Animated.sequence([
+    if (!isAv) return;
+    const lp = Animated.loop(Animated.sequence([
       Animated.timing(pulse, { toValue: 1.10, duration: 800, useNativeDriver: true }),
       Animated.timing(pulse, { toValue: 1.00, duration: 800, useNativeDriver: true }),
     ]));
-    loop.start();
-    return () => loop.stop();
-  }, [status]);
+    lp.start(); return () => lp.stop();
+  }, [isAv]);
 
-  const isLocked  = status === 'locked';
-  const isCleared = status === 'cleared';
-
-  const borderCol = isCleared ? COLORS.gold : status === 'available' ? '#FFFFFF' : COLORS.border;
-  const bgColor   = isLocked  ? COLORS.panel : isCleared ? '#3A2800' : '#1A2840';
+  const bg = isLk ? '#0E1218' : isCl ? '#251800' : '#0A1525';
+  const bc = isCl ? COLORS.gold : isAv ? '#FFFFFF' : '#1E2430';
+  const r  = VD / 2;
+  // Wrapper: label (18px) + gap (3) + circle (VD) + gap (3) + name (18px) = VD+42
+  const wH = VD + 42;
+  const wW = VD + 44;
 
   return (
-    <TouchableOpacity onPress={isLocked ? null : onPress} activeOpacity={isLocked ? 1 : 0.75} disabled={isLocked}>
-      <Animated.View style={[
-        styles.vsNode,
-        { borderColor: borderCol, backgroundColor: bgColor },
-        isLocked && styles.vsNodeLocked,
-        status === 'available' && { transform: [{ scale: pulse }] },
-      ]}>
-        {/* Always show the character — locked ones are just dimmed */}
-        <CrabSprite phase={charDef.phase} char={charDef.char} size={32} facingLeft />
-        {isLocked  && <Text style={styles.vsLockIcon}>🔒</Text>}
-        {isCleared && <Text style={styles.vsCleared}>✓</Text>}
-      </Animated.View>
-    </TouchableOpacity>
-  );
-}
-
-// ─── Zone label ─────────────────────────────────────────────────
-
-function ZoneLabel({ zone }) {
-  return (
-    <View style={[styles.zoneLabel, { borderColor: zone.color }]}>
-      <Text style={[styles.zoneLabelText, { color: zone.color }]}>{zone.name}</Text>
+    <View style={{ position: 'absolute', left: cx - wW / 2, top: cy - r - 21, width: wW, height: wH, alignItems: 'center' }}>
+      <Text style={[S.vsLbl, { color: isCl ? COLORS.gold : isAv ? COLORS.accent : COLORS.textDim }]}>
+        VS BATTLE
+      </Text>
+      <TouchableOpacity onPress={isLk ? null : onPress} activeOpacity={isLk ? 1 : 0.8}>
+        <Animated.View style={[
+          S.vsNode,
+          { backgroundColor: bg, borderColor: bc, borderWidth: isAv || isCl ? 3 : 2 },
+          isAv && { transform: [{ scale: pulse }], shadowColor: COLORS.accent, shadowOpacity: 0.6, shadowRadius: 12, elevation: 8 },
+          isCl && { shadowColor: COLORS.gold, shadowOpacity: 0.5, shadowRadius: 8, elevation: 5 },
+          isLk && { opacity: 0.35 },
+        ]}>
+          <CrabSprite phase={cd.phase} char={cd.char} size={36} facingLeft />
+          {isLk && <Text style={S.vsLkIco}>🔒</Text>}
+          {isCl && <Text style={S.vsOk}>✓</Text>}
+        </Animated.View>
+      </TouchableOpacity>
+      <Text style={[S.vsName, { color: isCl ? COLORS.gold : COLORS.textMid }]} numberOfLines={1}>
+        {vs.charName}{isCl ? ' ✓' : isAv ? ' !' : ''}
+      </Text>
     </View>
   );
 }
 
-// ─── Path connector ─────────────────────────────────────────────
-
-function PathDots({ color, count = 4 }) {
+// ── Zone banner ───────────────────────────────────────────────────
+function ZoneBanner({ canvasCy, zone }) {
   return (
-    <View style={styles.pathContainer}>
-      {Array.from({ length: count }).map((_, i) => (
-        <View key={i} style={[styles.pathDot, { backgroundColor: color }]} />
-      ))}
+    <View style={[S.zb, { top: canvasCy - 14 }]}>
+      <View style={[S.zbLine, { backgroundColor: zone.color + '55' }]} />
+      <View style={[S.zbTag, { borderColor: zone.color + '88' }]}>
+        <Text style={[S.zbTxt, { color: zone.color }]}>{zone.name}</Text>
+      </View>
+      <View style={[S.zbLine, { backgroundColor: zone.color + '55' }]} />
     </View>
   );
 }
 
-// ─── Main ───────────────────────────────────────────────────────
-
+// ── Main ──────────────────────────────────────────────────────────
 export default function StageMapScreen({ navigation }) {
+  const { width: SW, height: SH } = useWindowDimensions();
   const store = useGameStore();
   const { hydrate, getLives, stageProgress, clearedStages, clearedVsBattles } = store;
-
   useEffect(() => { hydrate(); }, []);
 
   const lives  = getLives();
   const msNext = msUntilNextLife(store.lives, store.livesUpdatedAt);
-
   const scrollRef = useRef(null);
-  const nodeYs    = useRef({});
 
-  const scrollToStage = useCallback((stageId) => {
-    const y = nodeYs.current[`stage_${stageId}`];
-    if (y != null && scrollRef.current)
-      scrollRef.current.scrollTo({ y: Math.max(0, y - 120), animated: true });
+  // Build flat items list: idx 0 = bottom (stage 1), last idx = top (stage 40)
+  const items = useMemo(() => {
+    const arr = [];
+    for (const stage of STAGES) {
+      arr.push({ type: 'stage', data: stage });
+      const vs = getVsAfterStage(stage.id);
+      if (vs) arr.push({ type: 'vs', data: vs });
+    }
+    return arr;
   }, []);
 
+  const canvasH = PADV + items.length * YS + PADV;
+
+  // Absolute canvas positions for each item
+  const positions = useMemo(() => {
+    let xi = 0;
+    return items.map((item, idx) => {
+      const cy = canvasH - PADV - idx * YS;
+      const cx = item.type === 'vs' ? SW * 0.50 : SW * XF[xi++ % XF.length];
+      return { cx, cy };
+    });
+  }, [items, SW, canvasH]);
+
+  // Zone banner positions: between VS node and next zone's first stage
+  const zoneBanners = useMemo(() => {
+    return ZONES.map((zone, zi) => {
+      const firstIdx = items.findIndex(it => it.type === 'stage' && it.data.id === zone.stages[0]);
+      if (firstIdx < 0) return null;
+      const firstCy = positions[firstIdx].cy;
+      if (zi === 0) {
+        // Zone 1: banner just below stage 1
+        return { zone, cy: firstCy + YS * 0.6 };
+      }
+      const prevCy = positions[firstIdx - 1].cy;
+      return { zone, cy: (firstCy + prevCy) / 2 };
+    }).filter(Boolean);
+  }, [items, positions]);
+
+  // Scroll to current stage on mount
   useEffect(() => {
-    const t = setTimeout(() => scrollToStage(stageProgress), 400);
+    const curIdx = items.findIndex(it => it.type === 'stage' && it.data.id === stageProgress);
+    const { cy } = curIdx >= 0 ? positions[curIdx] : { cy: canvasH - PADV };
+    const t = setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: Math.max(0, cy - SH * 0.5), animated: false });
+    }, 350);
     return () => clearTimeout(t);
-  }, [stageProgress]);
+  }, []);
 
-  const handlePlayStage = (stage) => {
-    if (lives <= 0) return;
-    navigation.navigate('StageGame', { stageId: stage.id });
+  const handlePlayStage = stage => lives > 0 && navigation.navigate('StageGame', { stageId: stage.id });
+  const handlePlayVs    = vs    => navigation.navigate('AdventureBoss', { vsId: vs.id });
+
+  const pathColor = idx => {
+    if (idx === 0) return '#1A2030';
+    const item = items[idx - 1];
+    if (item.type === 'stage') {
+      return clearedStages[item.data.id] ? getZone(item.data.id).color : '#1A2030';
+    }
+    return clearedVsBattles[item.data.id] ? COLORS.gold : '#1A2030';
   };
-
-  const handlePlayVs = (vs) => {
-    navigation.navigate('AdventureBoss', { vsId: vs.id });
-  };
-
-  // Build interleaved list: stages + VS battles in order
-  // After each block of 5 stages, insert the VS battle node
-  const positions = ['left', 'center', 'right', 'center'];
-  let posIdx = 0; // tracks zigzag position across stages+vs
-
-  // Build items array: each item is { type: 'stage'|'vs', data }
-  const items = [];
-  for (const stage of STAGES) {
-    items.push({ type: 'stage', data: stage });
-    const vs = getVsAfterStage(stage.id);
-    if (vs) items.push({ type: 'vs', data: vs });
-  }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={S.safe}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.bg} />
 
-      {/* ── Header ─────────────────────────────────────────────── */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Text style={styles.backBtnText}>← BACK</Text>
+      <View style={S.hdr}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={S.back}>
+          <Text style={S.backTxt}>← BACK</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>ADVENTURE</Text>
+        <Text style={S.title}>ADVENTURE</Text>
         <View style={{ width: 60 }} />
       </View>
 
-      {/* ── Lives ──────────────────────────────────────────────── */}
       <LivesBar lives={lives} msNext={msNext} />
 
-      {/* ── Map ────────────────────────────────────────────────── */}
       <ScrollView
         ref={scrollRef}
-        style={styles.scroll}
-        contentContainerStyle={styles.mapContent}
+        style={S.scroll}
+        contentContainerStyle={{ width: SW, height: canvasH }}
         showsVerticalScrollIndicator={false}
       >
-        {items.map((item, idx) => {
-          if (item.type === 'stage') {
-            const stage     = item.data;
-            const zone      = getZone(stage.id);
-            const pos       = positions[posIdx % positions.length];
-            posIdx++;
-            const isFirst   = idx === 0;
-            const isCleared = !!clearedStages[stage.id];
-            const isCurrent = stage.id === stageProgress;
-            const isLocked  = stage.id > stageProgress;
-            const status    = isCleared ? 'cleared' : isCurrent ? 'current' : isLocked ? 'locked' : 'cleared';
+        <View style={{ position: 'absolute', width: SW, height: canvasH }}>
 
-            // Zone label before first stage of each zone
-            const showZoneLabel = isFirst || (zone.stages[0] === stage.id && idx > 0);
-
-            // Color for path coming out of this node
-            const pathColor = (isCleared || isCurrent) ? zone.color : COLORS.border;
-
+          {/* ── Path segments ── */}
+          {items.map((_, idx) => {
+            if (idx === 0) return null;
+            const p0 = positions[idx - 1], p1 = positions[idx];
             return (
-              <View key={`s_${stage.id}`} onLayout={e => { nodeYs.current[`stage_${stage.id}`] = e.nativeEvent.layout.y; }}>
-                {showZoneLabel && <ZoneLabel zone={zone} />}
-                <View style={[styles.nodeRow, styles[`nodeRow_${pos}`]]}>
-                  <View style={styles.nodeWrap}>
-                    <StageNode
-                      stage={stage}
-                      status={status}
-                      zoneColor={zone.color}
-                      onPress={() => handlePlayStage(stage)}
-                    />
-                    {!isLocked && (
-                      <View style={styles.stageInfo}>
-                        <Text style={styles.stageName} numberOfLines={1}>{stage.name}</Text>
-                        <Text style={styles.stageSub}  numberOfLines={1}>{stage.subtitle}</Text>
-                        {isCleared && (
-                          <Text style={styles.stageStars}>
-                            {'★'.repeat(clearedStages[stage.id]?.stars ?? 0)}
-                            {'☆'.repeat(3 - (clearedStages[stage.id]?.stars ?? 0))}
-                          </Text>
-                        )}
-                        <Text style={styles.stageTarget}>🎯 {stage.target.toLocaleString()}</Text>
-                      </View>
-                    )}
-                  </View>
-                  <PathDots color={pathColor} />
-                </View>
-              </View>
+              <PathSeg key={`p${idx}`}
+                x1={p0.cx} y1={p0.cy}
+                x2={p1.cx} y2={p1.cy}
+                color={pathColor(idx)}
+              />
             );
-          }
+          })}
 
-          // ── VS Battle node ──────────────────────────────────
-          if (item.type === 'vs') {
-            const vs        = item.data;
-            const pos       = positions[posIdx % positions.length];
-            posIdx++;
-            const isCleared = !!clearedVsBattles[vs.id];
-            // VS is available once all stages in the preceding zone are cleared
-            // (stageProgress > vs.afterStage means at least one stage past the zone)
-            const isAvailable = stageProgress > vs.afterStage || isCleared;
-            const vsStatus  = isCleared ? 'cleared' : isAvailable ? 'available' : 'locked';
-            const charDef   = getCharDef(vs.unlocksChar);
-            const pathColor = isCleared ? COLORS.gold : isAvailable ? COLORS.textMid : COLORS.border;
+          {/* ── Zone banners ── */}
+          {zoneBanners.map(({ zone, cy }) => (
+            <ZoneBanner key={`z${zone.id}`} canvasCy={cy} zone={zone} />
+          ))}
 
-            return (
-              <View key={`vs_${vs.id}`} onLayout={e => { nodeYs.current[`vs_${vs.id}`] = e.nativeEvent.layout.y; }}>
-                <View style={[styles.nodeRow, styles[`nodeRow_${pos}`]]}>
-                  <View style={styles.vsWrap}>
-                    <VsNode vs={vs} status={vsStatus} onPress={() => handlePlayVs(vs)} />
-                    {/* Info bubble — always visible so players know what's coming */}
-                    <View style={styles.vsInfo}>
-                      <Text style={styles.vsInfoLabel}>VS BATTLE</Text>
-                      <Text style={[styles.vsInfoChar, { color: isCleared ? COLORS.gold : COLORS.textMid }]}>
-                        {vs.charName}{isCleared ? ' ✓' : ''}
-                      </Text>
-                      {!isCleared && !isAvailable && (
-                        <Text style={styles.vsInfoSub}>Clear stage {vs.afterStage} first</Text>
-                      )}
-                      {!isCleared && isAvailable && (
-                        <Text style={[styles.vsInfoSub, { color: COLORS.accent }]}>TAP TO CHALLENGE!</Text>
-                      )}
-                    </View>
-                  </View>
-                  <PathDots color={pathColor} />
-                </View>
-              </View>
-            );
-          }
+          {/* ── Nodes (rendered on top of paths) ── */}
+          {items.map((item, idx) => {
+            const { cx, cy } = positions[idx];
 
-          return null;
-        })}
-        <View style={{ height: 80 }} />
+            if (item.type === 'stage') {
+              const st   = item.data;
+              const zone = getZone(st.id);
+              const isCl = !!clearedStages[st.id];
+              const isCu = st.id === stageProgress;
+              const isLk = st.id > stageProgress;
+              return (
+                <StageNode key={`s${st.id}`}
+                  cx={cx} cy={cy} stage={st}
+                  status={isCl ? 'cleared' : isCu ? 'current' : isLk ? 'locked' : 'cleared'}
+                  zoneColor={zone.color}
+                  onPress={() => handlePlayStage(st)}
+                />
+              );
+            }
+
+            if (item.type === 'vs') {
+              const vs = item.data;
+              const isCl = !!clearedVsBattles[vs.id];
+              const isAv = stageProgress > vs.afterStage || isCl;
+              return (
+                <VsNode key={`v${vs.id}`}
+                  cx={cx} cy={cy} vs={vs}
+                  status={isCl ? 'cleared' : isAv ? 'available' : 'locked'}
+                  onPress={() => handlePlayVs(vs)}
+                />
+              );
+            }
+            return null;
+          })}
+
+        </View>
       </ScrollView>
 
-      {/* ── Ad banner ──────────────────────────────────────────── */}
-      <View style={styles.adBanner}>
-        <Text style={styles.adText}>AD 320×100</Text>
+      <View style={S.adBanner}>
+        <Text style={S.adTxt}>AD 320×100</Text>
       </View>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safe:   { flex: 1, backgroundColor: COLORS.bg },
+const S = StyleSheet.create({
+  safe:  { flex: 1, backgroundColor: COLORS.bg },
   scroll: { flex: 1 },
 
-  header: {
+  hdr: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingVertical: 10,
     borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },
-  headerTitle: { fontSize: 13, fontWeight: '900', color: COLORS.accent, letterSpacing: 3 },
-  backBtn:     { paddingVertical: 4 },
-  backBtnText: { fontSize: 10, fontWeight: '800', color: COLORS.textDim },
+  title:   { fontSize: 13, fontWeight: '900', color: COLORS.accent, letterSpacing: 3 },
+  back:    { paddingVertical: 4 },
+  backTxt: { fontSize: 10, fontWeight: '800', color: COLORS.textDim },
 
   livesBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
     paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },
-  livesHearts: { flexDirection: 'row', gap: 3 },
-  heart:       { fontSize: 20 },
-  heartFull:   { color: '#FF4060' },
-  heartEmpty:  { color: COLORS.border },
-  lifeTimer:   { fontSize: 11, fontWeight: '800', color: COLORS.textDim },
-
-  mapContent: { paddingHorizontal: 16, paddingTop: 20 },
-
-  zoneLabel: {
-    alignSelf: 'center', borderWidth: 1, borderRadius: 8,
-    paddingHorizontal: 16, paddingVertical: 5, marginVertical: 16,
-  },
-  zoneLabelText: { fontSize: 9, fontWeight: '900', letterSpacing: 2 },
-
-  // Stage rows
-  nodeRow:        { flexDirection: 'column', alignItems: 'center', marginVertical: 2 },
-  nodeRow_left:   { alignItems: 'flex-start', paddingLeft: 16 },
-  nodeRow_center: { alignItems: 'center' },
-  nodeRow_right:  { alignItems: 'flex-end', paddingRight: 16 },
-
-  nodeWrap: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-
-  // Stage node circle
-  node: {
-    width: 52, height: 52, borderRadius: 26, borderWidth: 2,
-    alignItems: 'center', justifyContent: 'center',
-    shadowRadius: 8, shadowOpacity: 0.4, elevation: 4,
-  },
-  nodeNum:   { fontSize: 13, fontWeight: '900', color: '#FFFFFF' },
-  nodeLock:  { fontSize: 18 },
-  nodeCheck: { fontSize: 9, color: '#FFFFFF', marginTop: -4 },
-
-  stageInfo:   { maxWidth: 130 },
-  stageName:   { fontSize: 9,  fontWeight: '900', color: COLORS.text, letterSpacing: 1 },
-  stageSub:    { fontSize: 8,  fontWeight: '600', color: COLORS.textMid, marginTop: 1 },
-  stageStars:  { fontSize: 11, color: COLORS.gold, marginTop: 2 },
-  stageTarget: { fontSize: 8,  fontWeight: '800', color: COLORS.textDim, marginTop: 2 },
-
-  // VS node
-  vsWrap: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  vsNode: {
-    width: 64, height: 64, borderRadius: 32, borderWidth: 3,
-    alignItems: 'center', justifyContent: 'center',
-    shadowRadius: 10, shadowOpacity: 0.5, elevation: 6,
-  },
-  vsNodeLocked: { opacity: 0.55 },
-  vsLockIcon: { position: 'absolute', bottom: 2, right: 4, fontSize: 10 },
-  vsCleared:  { position: 'absolute', top: 2, right: 6, fontSize: 10, color: COLORS.gold, fontWeight: '900' },
-  vsInfo:    { maxWidth: 120 },
-  vsInfoLabel: { fontSize: 8,  fontWeight: '900', color: COLORS.gold, letterSpacing: 2 },
-  vsInfoSub:   { fontSize: 7,  fontWeight: '600', color: COLORS.textDim, marginTop: 1 },
-  vsInfoChar:  { fontSize: 11, fontWeight: '900', color: COLORS.text, marginTop: 2, letterSpacing: 1 },
+  hearts:    { flexDirection: 'row', gap: 3 },
+  heart:     { fontSize: 20 },
+  hFull:     { color: '#FF4060' },
+  hEmpty:    { color: COLORS.border },
+  lifeTimer: { fontSize: 11, fontWeight: '800', color: COLORS.textDim },
 
   // Path
-  pathContainer: { flexDirection: 'column', alignItems: 'center', gap: 4, paddingVertical: 4 },
-  pathDot:       { width: 4, height: 4, borderRadius: 2 },
+  pBase: { position: 'absolute' },
+
+  // Zone banner
+  zb:    { position: 'absolute', left: 0, right: 0, height: 28, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 8 },
+  zbLine: { flex: 1, height: 1 },
+  zbTag:  { borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 3 },
+  zbTxt:  { fontSize: 7, fontWeight: '900', letterSpacing: 2 },
+
+  // Stage node
+  node: {
+    width: ND, height: ND, borderRadius: ND / 2,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  nodeN:  { fontSize: 12, fontWeight: '900', color: '#FFFFFF' },
+  nodeLk: { fontSize: 16 },
+  nodeCk: { fontSize: 8, color: 'rgba(255,255,255,0.8)', marginTop: -3 },
+
+  // VS node
+  vsNode: {
+    width: VD, height: VD, borderRadius: VD / 2,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  vsLbl:   { fontSize: 7, fontWeight: '900', letterSpacing: 2, marginBottom: 3 },
+  vsName:  { fontSize: 9, fontWeight: '800', letterSpacing: 1, marginTop: 4 },
+  vsLkIco: { position: 'absolute', bottom: 4, right: 5, fontSize: 10 },
+  vsOk:    { position: 'absolute', top: 2, right: 6, fontSize: 10, color: COLORS.gold, fontWeight: '900' },
 
   adBanner: {
     height: 50, backgroundColor: COLORS.panel,
     borderTopWidth: 1, borderTopColor: COLORS.border,
     alignItems: 'center', justifyContent: 'center',
   },
-  adText: { fontSize: 10, color: COLORS.textDim },
+  adTxt: { fontSize: 10, color: COLORS.textDim },
 });
