@@ -150,31 +150,12 @@ function scoreFor(n, cascade) {
   return Math.floor(base * Math.pow(CASCADE_MULT, cascade));
 }
 
-// ─── Idle breathe hook ───────────────────────────────────────────
-function useIdleBreathe(anim, blockId, paused) {
-  const loopRef = useRef(null);
-  useEffect(() => {
-    if (paused) { loopRef.current?.stop(); return; }
-    const phase = (blockId * 137) % 3000; // golden-ratio stagger
-    const t = setTimeout(() => {
-      loopRef.current = Animated.loop(
-        Animated.sequence([
-          Animated.timing(anim, { toValue: 1.03, duration: 900, useNativeDriver: true }),
-          Animated.timing(anim, { toValue: 1.00, duration: 900, useNativeDriver: true }),
-        ])
-      );
-      loopRef.current.start();
-    }, phase);
-    return () => { clearTimeout(t); loopRef.current?.stop(); anim.setValue(1); };
-  }, [paused]);
-}
-
 // ─── Block component (stable key = UUID) ─────────────────────────
+// No per-block breathe loop — eliminates 56 concurrent JS-thread animations.
+// A single shared breathe is driven from the parent (see useEffect in PuzzleGrid).
 const BlockAnim = React.memo(
-  ({ id, blockData, ax, ay, ascale, aopacity, isDragging, paused }) => {
-    const def     = BLOCKS[blockData.type] ?? BLOCKS[0];
-    const breathe = useRef(new Animated.Value(1)).current;
-    useIdleBreathe(breathe, id, paused || isDragging);
+  ({ id, blockData, ax, ay, ascale, aopacity, isDragging }) => {
+    const def = BLOCKS[blockData.type] ?? BLOCKS[0];
 
     return (
       <Animated.View style={{
@@ -185,7 +166,7 @@ const BlockAnim = React.memo(
         transform: [
           { translateX: ax },
           { translateY: ay },
-          { scale: Animated.multiply(ascale, breathe) },
+          { scale: ascale },
         ],
         opacity: aopacity,
       }}>
@@ -195,7 +176,6 @@ const BlockAnim = React.memo(
   },
   (prev, next) =>
     prev.isDragging === next.isDragging &&
-    prev.paused     === next.paused     &&
     prev.blockData  === next.blockData,
 );
 
@@ -298,8 +278,12 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
       // fresh blocks on top, survivors fall below
       const full = [...fresh, ...surviving];
       for (let r = 0; r < GRID_ROWS; r++) {
+        const prevId = grid[r][c];
         grid[r][c] = full[r];
-        drops.push({ id: full[r], toR: r, toC: c, isNew: r < needed });
+        // Only animate blocks that actually moved or are new
+        if (full[r] !== prevId) {
+          drops.push({ id: full[r], toR: r, toC: c, isNew: r < needed });
+        }
       }
     }
     return { drops, newIds };
@@ -377,30 +361,36 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
       onScoreAddRef.current(pts);
       if (cascade > 0) onComboRef.current(cascade);
 
-      // Pop: matched blocks STILL IN DOM → animation is visible ✓
+      // Pop: punch up then collapse. Flatten to 2 parallel batches (no nested sequence per block).
+      const matchArr = [...matchedIds];
+
+      // Punch up (all at once)
       await new Promise(res =>
-        Animated.parallel([...matchedIds].map(id => {
-          const a = getAnim(id);
-          return Animated.sequence([
-            Animated.timing(a.scale, {
-              toValue: 1.45, duration: POP_PUNCH_MS, useNativeDriver: true,
-            }),
-            Animated.parallel([
-              Animated.timing(a.scale,   { toValue: 0, duration: POP_FADE_MS, useNativeDriver: true }),
-              Animated.timing(a.opacity, { toValue: 0, duration: POP_FADE_MS, useNativeDriver: true }),
-            ]),
-          ]);
-        })).start(res)
+        Animated.parallel(matchArr.map(id =>
+          Animated.timing(getAnim(id).scale, {
+            toValue: 1.45, duration: POP_PUNCH_MS, useNativeDriver: true,
+          })
+        )).start(res)
       );
 
-      // Drop all blocks (timing animation, deterministic)
-      // NOTE: matched blocks stay in liveIds during drop — invisible (scale=0,
-      // opacity=0 after pop) but removing them mid-animation would trigger a
-      // React re-render on the JS thread causing stutter. Batch removal to end.
-      await new Promise(res =>
-        Animated.parallel(drops.map(({ id, toR, toC }) => dropTiming(id, toR, toC)))
-          .start(res)
-      );
+      // Collapse + fade (all at once — flat array, no nested parallel per block)
+      const collapseAnims = [];
+      for (const id of matchArr) {
+        const a = getAnim(id);
+        collapseAnims.push(
+          Animated.timing(a.scale,   { toValue: 0, duration: POP_FADE_MS, useNativeDriver: true }),
+          Animated.timing(a.opacity, { toValue: 0, duration: POP_FADE_MS, useNativeDriver: true }),
+        );
+      }
+      await new Promise(res => Animated.parallel(collapseAnims).start(res));
+
+      // Drop only blocks that actually moved (filtered in applyGravity)
+      if (drops.length > 0) {
+        await new Promise(res =>
+          Animated.parallel(drops.map(({ id, toR, toC }) => dropTiming(id, toR, toC)))
+            .start(res)
+        );
+      }
     }
 
     // ── Phase 4: ONE setLiveIds to remove ALL matched blocks after animation ──
@@ -636,7 +626,6 @@ export default function PuzzleGrid({ hard, onScoreAdd, onCombo, paused }) {
               ascale={a.scale}
               aopacity={a.opacity}
               isDragging={drag.current?.id === id}
-              paused={paused}
             />
           );
         })}
