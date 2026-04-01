@@ -5,30 +5,29 @@
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ─── Zones ───────────────────────────────────────────────────────
-// Each zone = a category of "bugs" in the system
+// 8 zones × 5 stages = 40 stages total
+// VS battle after each zone unlocks next character
 export const ZONES = [
-  { id: 1, name: 'BOOT SECTOR',     color: '#3090D0', stages: [1,2,3,4,5]       },
-  { id: 2, name: 'MEMORY LEAK',     color: '#48B040', stages: [6,7,8,9,10]      },
+  { id: 1, name: 'BOOT SECTOR',     color: '#3090D0', stages: [ 1, 2, 3, 4, 5]  },
+  { id: 2, name: 'MEMORY LEAK',     color: '#48B040', stages: [ 6, 7, 8, 9,10]  },
   { id: 3, name: 'STACK OVERFLOW',  color: '#E07830', stages: [11,12,13,14,15]  },
   { id: 4, name: 'NULL POINTER',    color: '#E868A8', stages: [16,17,18,19,20]  },
   { id: 5, name: 'DEADLOCK',        color: '#C82020', stages: [21,22,23,24,25]  },
   { id: 6, name: 'RACE CONDITION',  color: '#7040B0', stages: [26,27,28,29,30]  },
-  { id: 7, name: 'KERNEL PANIC',    color: '#909098', stages: [31,32]           },
+  { id: 7, name: 'KERNEL PANIC',    color: '#909098', stages: [31,32,33,34,35]  },
+  { id: 8, name: 'SYSTEM MELTDOWN', color: '#FF6820', stages: [36,37,38,39,40]  },
 ];
 
 // ─── Stage definitions ───────────────────────────────────────────
-// target: score to beat in timeLimit seconds
-// obstacles: grey Bit blocks placed on the grid at start
-// obstacleRate: spawn rate of new obstacle blocks from above (0-1)
-//
 // Difficulty scale:
-//   Stage 1-5:   target 150-300   obstacles 0    rate 0
-//   Stage 6-10:  target 350-560   obstacles 0    rate 0
-//   Stage 11-15: target 620-950   obstacles 1-2  rate 0.02
-//   Stage 16-20: target 1050-1500 obstacles 2-3  rate 0.04
-//   Stage 21-25: target 1650-2300 obstacles 3-4  rate 0.07
-//   Stage 26-30: target 2500-3300 obstacles 4-5  rate 0.10
-//   Stage 31-32: target 3600-4000 obstacles 6    rate 0.14
+//   Zone 1 (1-5):   target  150- 320  obstacles 0    rate 0
+//   Zone 2 (6-10):  target  370- 580  obstacles 0    rate 0
+//   Zone 3 (11-15): target  650- 970  obstacles 1-2  rate 0.02-0.03
+//   Zone 4 (16-20): target 1070-1560  obstacles 2-3  rate 0.04-0.05
+//   Zone 5 (21-25): target 1700-2350  obstacles 4-5  rate 0.07-0.08
+//   Zone 6 (26-30): target 2550-3380  obstacles 5    rate 0.10-0.12
+//   Zone 7 (31-35): target 3650-5200  obstacles 6    rate 0.14-0.16
+//   Zone 8 (36-40): target 5500-7000  obstacles 7    rate 0.17-0.20
 
 export const STAGES = [
   // ── Zone 1: BOOT SECTOR ──────────────────────────────────────
@@ -75,20 +74,32 @@ export const STAGES = [
 
   // ── Zone 7: KERNEL PANIC ──────────────────────────────────
   { id: 31, name: 'BUG #031', subtitle: 'Kernel Panic',    zone: 7, target: 3650, timeLimit: 30, obstacles: 6, obstacleRate: 0.14 },
-  { id: 32, name: 'BUG #032', subtitle: 'System Failure',  zone: 7, target: 4100, timeLimit: 30, obstacles: 6, obstacleRate: 0.14 },
+  { id: 32, name: 'BUG #032', subtitle: 'System Failure',  zone: 7, target: 3950, timeLimit: 30, obstacles: 6, obstacleRate: 0.14 },
+  { id: 33, name: 'BUG #033', subtitle: 'Core Dump',       zone: 7, target: 4300, timeLimit: 30, obstacles: 6, obstacleRate: 0.15 },
+  { id: 34, name: 'BUG #034', subtitle: 'Watchdog Fail',   zone: 7, target: 4700, timeLimit: 30, obstacles: 6, obstacleRate: 0.15 },
+  { id: 35, name: 'BUG #035', subtitle: 'Fatal Exception', zone: 7, target: 5200, timeLimit: 30, obstacles: 6, obstacleRate: 0.16 },
+
+  // ── Zone 8: SYSTEM MELTDOWN ───────────────────────────────
+  { id: 36, name: 'BUG #036', subtitle: 'Thermal Runaway', zone: 8, target: 5500, timeLimit: 30, obstacles: 7, obstacleRate: 0.17 },
+  { id: 37, name: 'BUG #037', subtitle: 'Clock Skew',      zone: 8, target: 5900, timeLimit: 30, obstacles: 7, obstacleRate: 0.17 },
+  { id: 38, name: 'BUG #038', subtitle: 'Power Surge',     zone: 8, target: 6300, timeLimit: 30, obstacles: 7, obstacleRate: 0.18 },
+  { id: 39, name: 'BUG #039', subtitle: 'Bit Flip',        zone: 8, target: 6700, timeLimit: 30, obstacles: 7, obstacleRate: 0.19 },
+  { id: 40, name: 'BUG #040', subtitle: 'Total Collapse',  zone: 8, target: 7000, timeLimit: 30, obstacles: 7, obstacleRate: 0.20 },
 ];
 
 // ─── VS Battles (appear after each zone) ────────────────────────
 // afterStage: the last stage of the zone this VS follows
 // unlocksChar: char key from ALL_CHARS that winning unlocks
+// Unlock order: Core → Chip → Pink → Wing → Power → Gentle → Robot → Pyramid
 export const VS_BATTLES = [
-  { id: 'vs1', afterStage:  5, unlocksChar: 'p2',      charName: 'Core',    difficulty: 'easy'   },
-  { id: 'vs2', afterStage: 10, unlocksChar: 'chip',    charName: 'Chip',    difficulty: 'easy'   },
-  { id: 'vs3', afterStage: 15, unlocksChar: 'wing',    charName: 'Wing',    difficulty: 'normal' },
-  { id: 'vs4', afterStage: 20, unlocksChar: 'gentle',  charName: 'Gentle',  difficulty: 'normal' },
-  { id: 'vs5', afterStage: 25, unlocksChar: 'power',   charName: 'Power',   difficulty: 'hard'   },
-  { id: 'vs6', afterStage: 30, unlocksChar: 'pink',    charName: 'Pink',    difficulty: 'hard'   },
-  { id: 'vs7', afterStage: 32, unlocksChar: 'pyramid', charName: 'Pyramid', difficulty: 'hard'   },
+  { id: 'vs1', afterStage:  5, unlocksChar: 'p2',      charName: 'Core',    difficulty: 'easy'       },
+  { id: 'vs2', afterStage: 10, unlocksChar: 'chip',    charName: 'Chip',    difficulty: 'easy'       },
+  { id: 'vs3', afterStage: 15, unlocksChar: 'pink',    charName: 'Pink',    difficulty: 'normal'     },
+  { id: 'vs4', afterStage: 20, unlocksChar: 'wing',    charName: 'Wing',    difficulty: 'normal'     },
+  { id: 'vs5', afterStage: 25, unlocksChar: 'power',   charName: 'Power',   difficulty: 'hard'       },
+  { id: 'vs6', afterStage: 30, unlocksChar: 'gentle',  charName: 'Gentle',  difficulty: 'hard'       },
+  { id: 'vs7', afterStage: 35, unlocksChar: 'robot',   charName: 'Robot',   difficulty: 'superhard'  },
+  { id: 'vs8', afterStage: 40, unlocksChar: 'pyramid', charName: 'Pyramid', difficulty: 'superhard'  },
 ];
 
 export function getVsBattle(id) {
@@ -110,13 +121,13 @@ export function getZone(stageId) {
   return ZONES.find(z => z.stages.includes(stageId)) ?? ZONES[0];
 }
 
-export const TOTAL_STAGES = STAGES.length; // 32
+export const TOTAL_STAGES = STAGES.length; // 40
 
 // Star rating based on score vs target
 export function calcStars(score, target) {
-  if (score <  target)          return 0;
-  if (score <  target * 1.4)   return 1;
-  if (score <  target * 2.0)   return 2;
+  if (score <  target)        return 0;
+  if (score <  target * 1.4) return 1;
+  if (score <  target * 2.0) return 2;
   return 3;
 }
 

@@ -15,14 +15,18 @@ import { useGameStore } from '../store/gameStore';
 import { ROUND_TIME, OPP_EASY, OPP_HARD, COLORS, ALL_CHARS } from '../constants/gameConfig';
 import { getVsBattle } from '../constants/stages';
 
-const OPP_NORMAL = { min: 10, max: 25 };
-const DIFF_CFG = { easy: OPP_EASY, normal: OPP_NORMAL, hard: OPP_HARD };
+const OPP_NORMAL    = { min: 10, max: 25 };
+const OPP_SUPERHARD = { min: 30, max: 70 };
+const DIFF_CFG = { easy: OPP_EASY, normal: OPP_NORMAL, hard: OPP_HARD, superhard: OPP_SUPERHARD };
 
 function randBetween(a, b) { return a + Math.random() * (b - a); }
 function getCharDef(key) { return ALL_CHARS.find(c => c.key === key) ?? ALL_CHARS[0]; }
 
-// Fixed CPU characters per VS battle
-const CPU_CHARS = { vs1: 'p2', vs2: 'chip', vs3: 'wing', vs4: 'gentle', vs5: 'power', vs6: 'pink', vs7: 'pyramid' };
+// CPU character is the one being unlocked (you fight the character to unlock it)
+const CPU_CHARS = {
+  vs1: 'p2', vs2: 'chip', vs3: 'pink', vs4: 'wing',
+  vs5: 'power', vs6: 'gentle', vs7: 'robot', vs8: 'pyramid',
+};
 
 // ─── Pause modal ─────────────────────────────────────────────────
 function PauseModal({ visible, onResume, onQuit }) {
