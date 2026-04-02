@@ -16,17 +16,81 @@
  *  │           AD 320×100                │
  *  └───────────────────────────────────────┘
  */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, SafeAreaView,
-  TouchableOpacity, Animated, AppState, Modal, StatusBar,
+  TouchableOpacity, Animated, AppState, Modal, StatusBar, Easing,
 } from 'react-native';
 import PuzzleGrid from '../components/PuzzleGrid';
 import TutorialOverlay from '../components/TutorialOverlay';
 import { useGameStore } from '../store/gameStore';
 import { useSoundEffects } from '../hooks/useSoundEffects';
 import { COLORS } from '../constants/gameConfig';
-import { getStage, calcStars } from '../constants/stages';
+import { getStage, getZone, calcStars } from '../constants/stages';
+
+// ─── Retro dot-grid background ───────────────────────────────────
+const DOT_SPC  = 26;
+const DOT_COLS = 16;
+const DOT_ROWS = 36; // extra rows so the seamless loop has no gap
+
+function RetroBackground({ zoneColor }) {
+  const drift = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(drift, {
+        toValue:        DOT_SPC,
+        duration:       3500,
+        easing:         Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start();
+  }, []);
+
+  // Flat dot array — built once (useMemo with no deps = computed at mount)
+  const dots = useMemo(() => {
+    const arr = [];
+    for (let r = -1; r < DOT_ROWS; r++)
+      for (let c = 0; c < DOT_COLS; c++)
+        arr.push(r * DOT_COLS + c); // index as key
+    return arr;
+  }, []);
+
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {/* Dark base */}
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: '#060C18' }]} />
+      {/* Zone color tint */}
+      {zoneColor && (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: zoneColor, opacity: 0.045 }]} />
+      )}
+      {/* Scrolling dot grid — overflow clipped by outer View */}
+      <Animated.View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFill, { transform: [{ translateY: drift }] }]}
+      >
+        {dots.map(i => {
+          const r = Math.floor(i / DOT_COLS) - 1;
+          const c = i % DOT_COLS;
+          return (
+            <View
+              key={i}
+              style={{
+                position:        'absolute',
+                left:            c * DOT_SPC,
+                top:             r * DOT_SPC,
+                width:           2,
+                height:          2,
+                borderRadius:    1,
+                backgroundColor: 'rgba(255,255,255,0.07)',
+              }}
+            />
+          );
+        })}
+      </Animated.View>
+    </View>
+  );
+}
 
 // ─── Target progress bar ─────────────────────────────────────────
 
@@ -118,7 +182,8 @@ function PauseModal({ visible, onResume, onQuit }) {
 
 export default function StageGameScreen({ route, navigation }) {
   const { stageId } = route.params;
-  const stage = getStage(stageId);
+  const stage    = getStage(stageId);
+  const zone     = getZone(stageId);
   const { spendLife, clearStage, recordCombo, recordStagePlayed, tutorialSeen, markTutorialSeen } = useGameStore();
   const { play } = useSoundEffects();
 
@@ -253,6 +318,9 @@ export default function StageGameScreen({ route, navigation }) {
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.bg} />
 
+      {/* ── Retro background ────────────────────────────────── */}
+      <RetroBackground zoneColor={zone?.color} />
+
       {/* ── Header ──────────────────────────────────────────── */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => setPhase('paused')} style={styles.pauseIconBtn}>
@@ -334,7 +402,7 @@ export default function StageGameScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
+  safe: { flex: 1, backgroundColor: '#060C18' },
 
   // Header
   header: {

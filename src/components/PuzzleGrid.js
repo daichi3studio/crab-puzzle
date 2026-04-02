@@ -983,9 +983,18 @@ export default PuzzleGrid;
 const styles = StyleSheet.create({
   outer: {
     borderRadius:    12,
-    backgroundColor: 'rgba(10,20,35,0.6)',
+    backgroundColor: 'rgba(6,14,28,0.92)',
     padding:         4,
     overflow:        'hidden',
+    borderWidth:     2,
+    borderColor:     'rgba(70,140,220,0.65)',
+    // Glow on iOS
+    shadowColor:     '#4090E0',
+    shadowOpacity:   0.55,
+    shadowRadius:    16,
+    shadowOffset:    { width: 0, height: 0 },
+    // Elevation on Android
+    elevation:       12,
   },
   inner: { position: 'relative' },
 });
