@@ -250,8 +250,11 @@ export default function StageMapScreen({ navigation }) {
     return () => clearTimeout(t);
   }, []);
 
-  const handlePlayStage = stage => navigation.navigate('StageGame', { stageId: stage.id });
-  const handlePlayVs    = vs    => navigation.navigate('BossIntro', { vsId: vs.id });
+  const handlePlayStage = stage => {
+    if (lives <= 0) return; // no lives — tap has no effect (LivesBar already shows timer)
+    navigation.navigate('StageGame', { stageId: stage.id });
+  };
+  const handlePlayVs = vs => navigation.navigate('BossIntro', { vsId: vs.id });
 
   const pathColor = idx => {
     if (idx === 0) return '#1A2030';

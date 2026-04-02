@@ -20,6 +20,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   View, Text, StyleSheet, SafeAreaView,
   TouchableOpacity, Animated, AppState, Modal, StatusBar, Easing,
+  useWindowDimensions,
 } from 'react-native';
 import PuzzleGrid from '../components/PuzzleGrid';
 import TutorialOverlay from '../components/TutorialOverlay';
@@ -28,69 +29,141 @@ import { useSoundEffects } from '../hooks/useSoundEffects';
 import { COLORS } from '../constants/gameConfig';
 import { getStage, getZone, calcStars } from '../constants/stages';
 
-// ─── Retro dot-grid background ───────────────────────────────────
-const DOT_SPC  = 26;
-const DOT_COLS = 16;
-const DOT_ROWS = 36; // extra rows so the seamless loop has no gap
+// ─── Retro scanline background (ultra-light: 3 animated Views only) ─
+// Each scanline is a 1px-tall stripe that drifts top→bottom and wraps.
+const SCAN_LINES = [
+  { offset: 0.00, opacity: 0.10, duration: 7000 },
+  { offset: 0.35, opacity: 0.06, duration: 9000 },
+  { offset: 0.65, opacity: 0.08, duration: 11000 },
+];
 
-function RetroBackground({ zoneColor }) {
-  const drift = useRef(new Animated.Value(0)).current;
+function RetroBackground({ zoneColor, screenHeight }) {
+  const anims = useRef(SCAN_LINES.map(() => new Animated.Value(0))).current;
 
   useEffect(() => {
-    Animated.loop(
-      Animated.timing(drift, {
-        toValue:        DOT_SPC,
-        duration:       3500,
-        easing:         Easing.linear,
-        useNativeDriver: true,
-      })
-    ).start();
+    SCAN_LINES.forEach((ln, i) => {
+      anims[i].setValue(ln.offset);
+      Animated.loop(
+        Animated.timing(anims[i], {
+          toValue:         ln.offset + 1,
+          duration:        ln.duration,
+          easing:          Easing.linear,
+          useNativeDriver: true,
+        })
+      ).start();
+    });
   }, []);
 
-  // Flat dot array — built once (useMemo with no deps = computed at mount)
-  const dots = useMemo(() => {
-    const arr = [];
-    for (let r = -1; r < DOT_ROWS; r++)
-      for (let c = 0; c < DOT_COLS; c++)
-        arr.push(r * DOT_COLS + c); // index as key
-    return arr;
-  }, []);
+  const h = screenHeight || 800;
 
   return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      {/* Dark base */}
-      <View style={[StyleSheet.absoluteFill, { backgroundColor: '#060C18' }]} />
-      {/* Zone color tint */}
+    <View style={StyleSheet.absoluteFill} pointerEvents="none" overflow="hidden">
+      {/* Zone tint base */}
       {zoneColor && (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: zoneColor, opacity: 0.045 }]} />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: zoneColor, opacity: 0.055 }]} />
       )}
-      {/* Scrolling dot grid — overflow clipped by outer View */}
-      <Animated.View
-        pointerEvents="none"
-        style={[StyleSheet.absoluteFill, { transform: [{ translateY: drift }] }]}
-      >
-        {dots.map(i => {
-          const r = Math.floor(i / DOT_COLS) - 1;
-          const c = i % DOT_COLS;
-          return (
-            <View
-              key={i}
-              style={{
-                position:        'absolute',
-                left:            c * DOT_SPC,
-                top:             r * DOT_SPC,
-                width:           2,
-                height:          2,
-                borderRadius:    1,
-                backgroundColor: 'rgba(255,255,255,0.07)',
-              }}
-            />
-          );
-        })}
-      </Animated.View>
+      {/* Scanlines */}
+      {SCAN_LINES.map((ln, i) => (
+        <Animated.View
+          key={i}
+          pointerEvents="none"
+          style={{
+            position:   'absolute',
+            left: 0, right: 0,
+            height:     2,
+            backgroundColor: '#FFFFFF',
+            opacity:    ln.opacity,
+            transform:  [{ translateY: Animated.multiply(anims[i], h) }],
+          }}
+        />
+      ))}
     </View>
   );
 }
+
+// ─── Countdown overlay (3 → 2 → 1 → GO!) ───────────────────────
+function CountdownOverlay({ onDone, stageName, zoneName, zoneColor }) {
+  const [count, setCount] = useState(3);
+  const scale   = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  const animateCount = useCallback((val, cb) => {
+    scale.setValue(0);
+    opacity.setValue(1);
+    Animated.parallel([
+      Animated.spring(scale,   { toValue: 1, friction: 3, tension: 120, useNativeDriver: true }),
+    ]).start();
+    const t = setTimeout(() => {
+      Animated.timing(opacity, { toValue: 0, duration: 200, useNativeDriver: true }).start(cb);
+    }, 750);
+    return t;
+  }, []);
+
+  useEffect(() => {
+    let timers = [];
+    const steps = [3, 2, 1, 0]; // 0 = "GO!"
+    steps.forEach((n, i) => {
+      const t = setTimeout(() => {
+        setCount(n);
+        animateCount(n, () => {});
+        if (i === steps.length - 1) {
+          setTimeout(onDone, 250);
+        }
+      }, i * 900);
+      timers.push(t);
+    });
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
+  const label = count === 0 ? 'GO!' : String(count);
+  const color = count === 0 ? '#60FF80' : count === 1 ? '#FF4060' : '#FFFFFF';
+
+  return (
+    <View style={cdStyles.overlay} pointerEvents="none">
+      <View style={[cdStyles.zoneTag, { borderColor: (zoneColor ?? '#888') + '88' }]}>
+        <Text style={[cdStyles.zoneText, { color: zoneColor ?? '#888' }]}>{zoneName}</Text>
+        <Text style={cdStyles.stageText}>{stageName}</Text>
+      </View>
+      <Animated.Text style={[
+        cdStyles.countText,
+        { color, opacity, transform: [{ scale }] },
+        count === 0 && cdStyles.goText,
+      ]}>
+        {label}
+      </Animated.Text>
+    </View>
+  );
+}
+
+const cdStyles = StyleSheet.create({
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems:     'center',
+    zIndex:         200,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  zoneTag: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginBottom: 36,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  zoneText:  { fontSize: 8,  fontWeight: '900', letterSpacing: 3, marginBottom: 4 },
+  stageText: { fontSize: 13, fontWeight: '900', color: '#FFFFFF', letterSpacing: 2 },
+  countText: {
+    fontSize: 88,
+    fontWeight: '900',
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 4 },
+    textShadowRadius: 12,
+  },
+  goText: { fontSize: 64, letterSpacing: 4 },
+});
 
 // ─── Target progress bar ─────────────────────────────────────────
 
@@ -184,12 +257,22 @@ export default function StageGameScreen({ route, navigation }) {
   const { stageId } = route.params;
   const stage    = getStage(stageId);
   const zone     = getZone(stageId);
-  const { spendLife, clearStage, recordCombo, recordStagePlayed, tutorialSeen, markTutorialSeen } = useGameStore();
+  const { height: screenH } = useWindowDimensions();
+  const { getLives, spendLife, clearStage, recordCombo, recordStagePlayed, tutorialSeen, markTutorialSeen } = useGameStore();
+
+  // ── Life guard: redirect back to map if no lives ──────────────
+  useEffect(() => {
+    if (getLives() <= 0) {
+      navigation.replace('StageMap');
+    }
+  }, []);
+
   const { play } = useSoundEffects();
 
   const [score,     setScore]     = useState(0);
   const [timeLeft,  setTimeLeft]  = useState(stage.timeLimit);
-  const [phase,     setPhase]     = useState('playing'); // 'playing' | 'paused' | 'done'
+  // phase: 'countdown' | 'playing' | 'paused' | 'done'
+  const [phase,     setPhase]     = useState('countdown');
   const [combo,     setCombo]     = useState(0);
   const [gridKey,   setGridKey]   = useState(0);
   const [showTutorial, setShowTutorial] = useState(!tutorialSeen);
@@ -204,15 +287,16 @@ export default function StageGameScreen({ route, navigation }) {
   const scoreRef    = useRef(0);    // sync ref for callbacks
   const maxComboRef = useRef(0);    // sync ref for max combo this session
 
-  // Spend a life and record play when stage starts
-  useEffect(() => {
+  // Spend a life and record play when stage starts (after countdown)
+  const handleCountdownDone = useCallback(() => {
+    setPhase('playing');
     spendLife();
     recordStagePlayed();
-  }, []);
+  }, [spendLife, recordStagePlayed]);
 
   // ─── Timer ───────────────────────────────────────────────────
   useEffect(() => {
-    if (phase !== 'playing') {
+    if (phase !== 'playing') {  // includes 'countdown', 'paused', 'done'
       clearInterval(timerRef.current);
       return;
     }
@@ -319,7 +403,17 @@ export default function StageGameScreen({ route, navigation }) {
       <StatusBar barStyle="light-content" backgroundColor={COLORS.bg} />
 
       {/* ── Retro background ────────────────────────────────── */}
-      <RetroBackground zoneColor={zone?.color} />
+      <RetroBackground zoneColor={zone?.color} screenHeight={screenH} />
+
+      {/* ── Countdown overlay ───────────────────────────────── */}
+      {phase === 'countdown' && !showTutorial && (
+        <CountdownOverlay
+          stageName={stage.name}
+          zoneName={zone?.name ?? ''}
+          zoneColor={zone?.color}
+          onDone={handleCountdownDone}
+        />
+      )}
 
       {/* ── Header ──────────────────────────────────────────── */}
       <View style={styles.header}>
@@ -395,6 +489,8 @@ export default function StageGameScreen({ route, navigation }) {
         onDone={() => {
           setShowTutorial(false);
           markTutorialSeen();
+          // After tutorial, trigger the countdown
+          setPhase('countdown');
         }}
       />
     </SafeAreaView>

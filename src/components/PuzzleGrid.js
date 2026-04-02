@@ -251,6 +251,8 @@ const PuzzleGrid = React.memo(function PuzzleGrid({ hard, onScoreAdd, onCombo, p
   const locked       = useRef(false);
   const drag         = useRef(null);
   const pendingSwap  = useRef(null);
+  // Double-tap tracking for special block activation
+  const lastTap      = useRef({ id: null, time: 0 });
 
 
   // Beam effect state
@@ -805,8 +807,17 @@ const PuzzleGrid = React.memo(function PuzzleGrid({ hard, onScoreAdd, onCombo, p
       if (!dir) {
         if (!locked.current) {
           const block = bmapRef.current.get(id);
-          if (block?.special) {
-            activateSpecial(r, c);
+          if (block?.special && block.special !== 'obstacle') {
+            // Require double-tap within 400ms to activate Robot/Pyramid
+            const now = Date.now();
+            const isDoubleTap = lastTap.current.id === id && (now - lastTap.current.time) < 400;
+            lastTap.current = { id, time: now };
+            if (isDoubleTap) {
+              lastTap.current = { id: null, time: 0 }; // reset so triple-tap doesn't fire again
+              activateSpecial(r, c);
+            }
+          } else {
+            lastTap.current = { id: null, time: 0 }; // reset on non-special tap
           }
         }
         return;
