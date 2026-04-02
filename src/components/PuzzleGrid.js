@@ -252,6 +252,15 @@ const PuzzleGrid = React.memo(function PuzzleGrid({ hard, onScoreAdd, onCombo, p
   const drag         = useRef(null);
   const pendingSwap  = useRef(null);
 
+  // Absolute screen origin of the outer view (used for pageX/pageY → grid coords)
+  const outerRef    = useRef(null);
+  const outerOrigin = useRef({ x: 0, y: 0 });
+  const onOuterLayout = useCallback(() => {
+    outerRef.current?.measure((_x, _y, _w, _h, pageX, pageY) => {
+      outerOrigin.current = { x: pageX, y: pageY };
+    });
+  }, []);
+
   // Beam effect state
   const beamOpacity  = useRef(new Animated.Value(0)).current;
   const [beamEffect, setBeamEffect] = useState(null);
@@ -740,9 +749,12 @@ const PuzzleGrid = React.memo(function PuzzleGrid({ hard, onScoreAdd, onCombo, p
 
     onPanResponderGrant: (evt) => {
       resetHintTimerRef.current();
-      const { locationX, locationY } = evt.nativeEvent;
-      const c = Math.floor(locationX / CELL);
-      const r = Math.floor(locationY / CELL);
+      const { pageX, pageY } = evt.nativeEvent;
+      const PADDING = 4; // matches outer view's padding
+      const localX = pageX - outerOrigin.current.x - PADDING;
+      const localY = pageY - outerOrigin.current.y - PADDING;
+      const c = Math.floor(localX / CELL);
+      const r = Math.floor(localY / CELL);
       if (r >= 0 && r < GRID_ROWS && c >= 0 && c < GRID_COLS) {
         const id = gridRef.current[r][c];
         if (id) drag.current = { r, c, id, dir: null, nid: null, nr: null, nc: null };
@@ -885,7 +897,9 @@ const PuzzleGrid = React.memo(function PuzzleGrid({ hard, onScoreAdd, onCombo, p
 
   return (
     <View
+      ref={outerRef}
       style={[styles.outer, { width: GRID_W + 8, height: GRID_H + 8 }]}
+      onLayout={onOuterLayout}
       {...panResponder.panHandlers}
     >
       <View style={[styles.inner, { width: GRID_W, height: GRID_H }]}>
