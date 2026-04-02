@@ -185,9 +185,9 @@ function TargetBar({ score, target }) {
 
 const COMBO_LEVELS = [
   { minCombo: 0, color: COLORS.gold,    textColor: '#000', size: 14, glow: false },
-  { minCombo: 2, color: '#FF8820',      textColor: '#FFF', size: 16, glow: false },
-  { minCombo: 3, color: '#FF3040',      textColor: '#FFF', size: 18, glow: true  },
-  { minCombo: 5, color: '#FF00CC',      textColor: '#FFF', size: 20, glow: true  },
+  { minCombo: 2, color: '#30E888',      textColor: '#000', size: 16, glow: false },
+  { minCombo: 3, color: '#00CCFF',      textColor: '#000', size: 18, glow: true  },
+  { minCombo: 5, color: '#DD60FF',      textColor: '#FFF', size: 20, glow: true  },
 ];
 
 function getComboStyle(combo) {
@@ -372,8 +372,8 @@ export default function StageGameScreen({ route, navigation }) {
 
   const handleFlash = useCallback(color => {
     setFlashColor(color);
-    flashAnim.setValue(0.35);
-    Animated.timing(flashAnim, { toValue: 0, duration: 350, useNativeDriver: true }).start();
+    flashAnim.setValue(1);
+    Animated.timing(flashAnim, { toValue: 0, duration: 600, useNativeDriver: true }).start();
   }, [flashAnim]);
 
   // ─── Timer pulse at ≤10s ─────────────────────────────────────
@@ -381,8 +381,8 @@ export default function StageGameScreen({ route, navigation }) {
     if (timeLeft === 10 && phase === 'playing') {
       timerPulseLoop.current = Animated.loop(
         Animated.sequence([
-          Animated.timing(timerPulse, { toValue: 1.18, duration: 280, useNativeDriver: true }),
-          Animated.timing(timerPulse, { toValue: 1.00, duration: 280, useNativeDriver: true }),
+          Animated.timing(timerPulse, { toValue: 1.25, duration: 350, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(timerPulse, { toValue: 1.00, duration: 350, easing: Easing.in(Easing.quad), useNativeDriver: true }),
         ])
       );
       timerPulseLoop.current.start();
@@ -449,10 +449,13 @@ export default function StageGameScreen({ route, navigation }) {
         </View>
       </View>
 
-      {/* ── Combo flash overlay ─────────────────────────────── */}
+      {/* ── Combo edge glow (replaces jarring full-screen flash) ── */}
       <Animated.View
         pointerEvents="none"
-        style={[StyleSheet.absoluteFill, { opacity: flashAnim, backgroundColor: flashColor, zIndex: 90 }]}
+        style={[
+          styles.comboGlow,
+          { opacity: flashAnim, borderColor: flashColor, shadowColor: flashColor },
+        ]}
       />
 
       {/* ── Combo toast ─────────────────────────────────────── */}
@@ -527,15 +530,17 @@ const styles = StyleSheet.create({
   pauseIcon:    { fontSize: 18, color: COLORS.textDim },
 
   timerNum: {
-    fontSize:    44,
+    fontSize:    52,
     fontWeight:  '900',
     fontVariant: ['tabular-nums'],
     color:       COLORS.text,
-    marginTop:   4,
+    marginTop:   2,
+    letterSpacing: 2,
   },
   timerNumDanger: {
+    color:            COLORS.timerDanger,
     textShadowColor:  COLORS.timerDanger,
-    textShadowRadius: 12,
+    textShadowRadius: 18,
     textShadowOffset: { width: 0, height: 0 },
   },
 
@@ -566,14 +571,15 @@ const styles = StyleSheet.create({
     gap:            6,
   },
   scoreVal: {
-    fontSize:    18,
+    fontSize:    24,
     fontWeight:  '900',
     color:       COLORS.text,
     fontVariant: ['tabular-nums'],
+    letterSpacing: 1,
   },
   scoreReached: { color: COLORS.win },
   targetLabel: {
-    fontSize:   12,
+    fontSize:   14,
     fontWeight: '700',
     color:      COLORS.textDim,
   },
@@ -602,6 +608,18 @@ const styles = StyleSheet.create({
     justifyContent:  'center',
   },
   adText: { fontSize: 10, color: COLORS.textDim },
+
+  // Combo edge glow (replaces full-screen flash)
+  comboGlow: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex:        95,
+    borderWidth:   4,
+    borderRadius:  0,
+    borderColor:   'transparent',
+    shadowRadius:  28,
+    shadowOpacity: 0.9,
+    elevation:     15,
+  },
 
   // Combo
   combo: {
